@@ -1,0 +1,46 @@
+# GVEC parameter file
+
+ProjectName = "CINQUEFOIL"
+which_hmap = 21
+PhiEdge = 1
+picard_current = "auto"
+
+X1_mn_max = [2, 2]
+X1_sin_cos = "_cos_"
+X2_mn_max = [2, 2]
+X2_sin_cos = "_sin_"
+LA_mn_max = [2, 2]
+LA_sin_cos = "_sin_"
+
+X1X2_deg = 5
+LA_deg = 5
+
+minimize_tol = 1e-05
+totalIter = 10000
+
+hmap_ncfile = "cinquefoil.nc"
+init_LA = true
+
+[sgrid]
+nElems = 4
+grid_type = 4
+
+# --- Profiles --- #
+
+[pres]
+type = "polynomial"
+coefs = [0.0]
+
+[I_tor]
+type = "polynomial"
+coefs = [0.0]
+
+# --- Boundary and Axis degrees of freedom --- #
+
+[X1_b_cos]
+"(1,  0)" = 1.0
+"(1,  1)" = 0.4
+
+[X2_b_sin]
+"(1,  0)" = 1.0
+"(1,  1)" = -0.4
