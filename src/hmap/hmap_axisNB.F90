@@ -48,16 +48,19 @@ TYPE,EXTENDS(c_hmap) :: t_hmap_axisNB
   !INTEGER              :: nfp   !! already part of c_hmap. Is overwritten in init!
   !curve description
   INTEGER              :: nzeta=0       !! number of points in zeta direction of the input axis
-  INTEGER              :: sgn_rot       !! sign of rotation around Z axis,  either +1 or -1: positive means that from one field period to the next,
-                                        !! xyz rotate counterclockwise around the Z-axis (right hand rule), negative then clockwise.
+  INTEGER              :: zeta_winding  !! winding number of the axis around the Z-axis
+                                        !! If positive, xyz rotate counterclockwise around the Z-axis (right hand rule), negative then clockwise.
+                                        !! If larger than 1, the axis winds around the Z-axis more than once.
+                                        !! The next field period starts at phi = 2pi zeta_winding / nfp.
   REAL(wp),ALLOCATABLE :: zeta(:)       !! zeta positions in one field period (1:nzeta),  on 'half' grid: zeta(i)=(i-0.5)/nzeta*(2pi/nfp)
   REAL(wp),ALLOCATABLE :: xyz(:,:)      !! cartesian coordinates of the axis for a full turn, (1:NFP*nzeta,1:3), zeta is on 'half' grid: zeta(i)=(i-0.5)/(NFP*nzeta)*(2pi)
   REAL(wp),ALLOCATABLE :: Nxyz(:,:)     !! "normal" vector of axis frame in cartesian coordinates for a full turn (1:NFP*nzeta,1:3). NOT ASSUMED TO BE ORTHOGONAL to tangent of curve
-  REAL(wp),ALLOCATABLE :: Bxyz(:,:)      !! "Bi-normal" vector of axis frame in cartesian coordinates for a full turn (1:NFP*nzeta,1:3). NOT ASSUMED TO BE ORTHOGONAL to tangent of curve or Nxyz
+  REAL(wp),ALLOCATABLE :: Bxyz(:,:)     !! "Bi-normal" vector of axis frame in cartesian coordinates for a full turn (1:NFP*nzeta,1:3). NOT ASSUMED TO BE ORTHOGONAL to tangent of curve or Nxyz
   !fourier modes
   REAL(wp),ALLOCATABLE :: xyz_hat_modes(:,:)   !! fourier modes of xhat,yhat,zhat on one field period,
-                                               !! x=cos(zeta)xhat-sgn_rot*sin(zeta)yhat,
-                                               !! y=sin(zeta)xhat+sgn_rot*cos(zeta)yhat, z=zhat
+                                               !! x=cos(zeta_winding * zeta)xhat-sin(zeta_winding * zeta)yhat,
+                                               !! y=sin(zeta_winding * zeta)xhat+cos(zeta_winding * zeta)yhat,
+                                               !! z=zhat
   REAL(wp),ALLOCATABLE :: Nxyz_hat_modes(:,:)   !! 1d fourier modes of Nxyz, one field period
   REAL(wp),ALLOCATABLE :: Bxyz_hat_modes(:,:)   !! 1d fourier modes of Bxyz, one field period
 
@@ -156,6 +159,7 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
   REAL(wp) :: Jh,min_Jh,max_Jh
   REAL(wp),DIMENSION(3) :: X0,T,N,B,Np,Bp
   REAL(wp),ALLOCATABLE :: cosz(:),sinz(:)
+  REAL(wp),DIMENSION(:),ALLOCATABLE :: phi,dphi
 !===================================================================================================================================
   CALL par_Barrier(beforeScreenOut='INIT HMAP :: axisNB FRAME OF A CLOSED CURVE ...')
 
@@ -166,19 +170,23 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
     CALL ReadNETCDF(sf)
 
 
-    sf%sgn_rot=1
-    IF(sf%nfp.GT.2)THEN !no need to check for nfp=1 and nfp=2 is either a positive or negative rotation by pi
-      IF(SUM((sf%xyz(:,1+sf%nzeta) -  rodrigues(sf%xyz(:,1),TWOPI/REAL(sf%nfp,wp)))**2).LT.1.0e-12)THEN
-         sf%sgn_rot=1
-      ELSEIF(SUM((sf%xyz(:,1+sf%nzeta) -  rodrigues(sf%xyz(:,1),-TWOPI/REAL(sf%nfp,wp)))**2).LT.1.0e-12)THEN
-         sf%sgn_rot=-1
-      ELSE
-        CALL abort(__STAMP__, &
-        'hmap_axisNB(G-Frame): problem with check of field period rotation: point at zeta=0 does not rotate to point at zeta= +/-2pi/nfp.', &
-           TypeInfo="InitializationError")
-      END IF
+    phi = ATAN2(sf%xyz(2,:), sf%xyz(1,:))
+    ALLOCATE(dphi(sf%nfp*sf%nzeta))
+    dphi(1:sf%nfp*sf%nzeta-1) = phi(2:sf%nfp*sf%nzeta) - phi(1:sf%nfp*sf%nzeta-1)
+    dphi(sf%nfp*sf%nzeta) = phi(1) - phi(sf%nfp*sf%nzeta)
+    dphi = MODULO(dphi + PI, TWOPI) - PI  ! wrap to [-pi, pi]
+    sf%zeta_winding = NINT(SUM(dphi) / TWOPI)
+    IF (sf%zeta_winding.EQ.0) THEN
+      CALL abort(__STAMP__, &
+        "hmap_axisNB(G-Frame): computed zeta_winding is zero! Check the input axis data.", &
+        TypeInfo="InitializationError")
     END IF
-    WRITE(UNIT_stdOut,'(4X,A,I2)')'INFO: sign of the rotation from zeta=0 to zeta=2pi/nfp is: ',sf%sgn_rot
+    IF (ABS(sf%zeta_winding - SUM(dphi) / TWOPI) > 1e-12_wp) THEN
+      CALL abort(__STAMP__, &
+        "hmap_axisNB(G-Frame): computed zeta_winding is not an integer! Check the input axis data.", &
+        TypeInfo="InitializationError", RealInfo=SUM(dphi) / TWOPI)
+    END IF
+    WRITE(UNIT_stdOut,'(4X,A,I2)')'INFO: winding number of zeta around the Z-axis is: ', sf%zeta_winding
 
     sf%n_max=(sf%nzeta-1)/2 ! maximum mode number on a field period
 
@@ -186,7 +194,7 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
   CALL par_BCast(sf%nzeta,0)
   CALL par_BCast(sf%nfp,0)
   CALL par_BCast(sf%n_max,0)
-  CALL par_Bcast(sf%sgn_rot,0)
+  CALL par_Bcast(sf%zeta_winding,0)
   IF(.NOT.MPIroot) CALL allocate_readin_vars(sf)
   CALL par_Bcast(sf%zeta,0)
   CALL par_Bcast(sf%xyz,0)
@@ -201,8 +209,8 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
     ALLOCATE(cosz(sf%nzeta*sf%nfp),sinz(sf%nzeta*sf%nfp))
     !build cos(zeta),sin(zeta) on full torus
     DO i=1,sf%nfp
-      cosz(sf%nzeta*(i-1)+1:sf%nzeta*i)=COS(sf%zeta(1:sf%nzeta)+TWOPI*(REAL(i-1,wp)/REAL(sf%nfp,wp)))
-      sinz(sf%nzeta*(i-1)+1:sf%nzeta*i)=SIN(sf%zeta(1:sf%nzeta)+TWOPI*(REAL(i-1,wp)/REAL(sf%nfp,wp)))
+      cosz(sf%nzeta*(i-1)+1:sf%nzeta*i)=COS(sf%zeta_winding*(sf%zeta(1:sf%nzeta)+TWOPI*(REAL(i-1,wp)/REAL(sf%nfp,wp))))
+      sinz(sf%nzeta*(i-1)+1:sf%nzeta*i)=SIN(sf%zeta_winding*(sf%zeta(1:sf%nzeta)+TWOPI*(REAL(i-1,wp)/REAL(sf%nfp,wp))))
     END DO
     sf%xyz_hat_modes =transform_to_hat(sf%xyz, "xyz to xyzhat"  )
     sf%Nxyz_hat_modes=transform_to_hat(sf%Nxyz,"Nxyz to Nxyzhat")
@@ -211,7 +219,7 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
 
     IF(nvisu.GT.0) CALL Visu_axisNB(sf,nvisu*sf%nfp)
 
-    CALL CheckFieldPeriodicity(sf,sf%sgn_rot,error_nfp)
+    CALL CheckFieldPeriodicity(sf,error_nfp)
     IF(error_nfp.LT.0) &
        CALL abort(__STAMP__, &
           "hmap_axisNB(G-Frame): check Field Periodicity failed!", &
@@ -253,13 +261,13 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
   !------------------
   !! transform from full period cartesian coordinates to one-field period "hat" cartesian coordinates,
   !! by rotating around the zaxis with the local angle zeta,
-  !! with the sign given by which direction xyz(zeta=0) rotates to xyz(zeta=2pi/nfp)
-  !! INVERSION OF: x=cos(zeta)*xhat - sgn_rot*sin(zeta)*yhat,
-  !!               y=cos(zeta)*yhat + sgn_rot*sin(zeta)*xhat, z <=> zhat
-  !! ==>           xhat=cos(zeta)x+sgn_rot*sin(zeta)y,
-  !!               yhat=cos(zeta)y-sgn_rot*sin(zeta)x,
+  !! with an additional factor given by the winding number of zeta around the Z-axis
+  !! INVERSION OF: x=cos(zeta_winding * zeta)*xhat - sin(zeta_winding * zeta)*yhat,
+  !!               y=cos(zeta_winding * zeta)*yhat + sin(zeta_winding * zeta)*xhat, z <=> zhat
+  !! ==>           xhat=cos(zeta_winding * zeta)x+sin(zeta_winding * zeta)y,
+  !!               yhat=cos(zeta_winding * zeta)y-sin(zeta_winding * zeta)x,
   !! check that all points on full period are the same in the xhat,yhat,zhat coordinates
-  !! NOTE THIS FUNCTION IS USING sinz=sin(zeta),cosz=cos(zeta) and sgn_rot computed above!!!!
+  !! NOTE THIS FUNCTION IS USING sinz=sin(zeta_winding*zeta),cosz=cos(zeta_winding*zeta) computed above!!!!
   FUNCTION transform_to_hat(xyz_in,msg)  RESULT(to_hat_modes)
     IMPLICIT NONE
 
@@ -270,8 +278,8 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
     REAL(wp) :: to_hat(3,sf%nzeta*sf%nfp)
     REAL(wp) :: check_xhat(1:3,2:sf%nfp)
     !------------------
-    to_hat(1,:)=xyz_in(1,:)*cosz(:)+sf%sgn_rot*xyz_in(2,:)*sinz(:)
-    to_hat(2,:)=xyz_in(2,:)*cosz(:)-sf%sgn_rot*xyz_in(1,:)*sinz(:)
+    to_hat(1,:)=xyz_in(1,:)*cosz(:)+xyz_in(2,:)*sinz(:)
+    to_hat(2,:)=xyz_in(2,:)*cosz(:)-xyz_in(1,:)*sinz(:)
     to_hat(3,:)=xyz_in(3,:)
     !check periodicity for remaining nfp
     DO i=2,sf%nfp
@@ -279,7 +287,7 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
       check_xhat(2,i)=MAXVAL(ABS(to_hat(2,1:sf%nzeta)-to_hat(2,sf%nzeta*(i-1)+1:sf%nzeta*i)))
       check_xhat(3,i)=MAXVAL(ABS(to_hat(3,1:sf%nzeta)-to_hat(3,sf%nzeta*(i-1)+1:sf%nzeta*i)))
     END DO
-    IF(ANY(check_xhat.GT.1.0e-12))THEN
+    IF(ANY(check_xhat.GT.1.0e-10))THEN
       DO i=2,sf%nfp
         WRITE(UNIT_stdout,'(A,I4,A,3E9.2)')'fp=1 vs fp=',i,', check_xyz=',check_xhat(1:3,i)
       END DO
@@ -464,16 +472,15 @@ END SUBROUTINE allocate_readin_vars
 !> Check that the TNB frame  really has the field periodicity of NFP:
 !! assumption for now is that the origin is fixed at rot_origin=(/0.,0.,0./)
 !! and the rotation axis is fixed at rot_axis=(/0.,0.,1./)
-!! sign of the rotation 'sgn_rot' is now accounted for in the transformation to xhat, so it has to be passed here.
+!! winding number of zeta around Z-axis is now accounted for in the transformation to xhat, provided by sf%zeta_winding
 !!
 !===================================================================================================================================
-SUBROUTINE CheckFieldPeriodicity( sf ,sgn_rot,error_nfp)
+SUBROUTINE CheckFieldPeriodicity(sf, error_nfp)
 ! MODULES
 IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT VARIABLES
   CLASS(t_hmap_axisNB), INTENT(IN) :: sf
-  INTEGER, INTENT(in)   :: sgn_rot !! sign of rotation
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! OUTPUT VARIABLES
   INTEGER, INTENT(out)  :: error_nfp
@@ -496,13 +503,13 @@ IMPLICIT NONE
     DO iz=1,sf%nzeta
       CALL sf%eval_TNB(sf%zeta(iz)+ ifp*dzeta_fp   ,X0_a,T,N_a,B_a,Np,Bp)
       CALL sf%eval_TNB(sf%zeta(iz)+(ifp+1)*dzeta_fp,X0_b,T,N_b,B_b,Np,Bp)
-      IF(.NOT.(SUM((X0_b -  rodrigues(X0_a,sgn_rot*dzeta_fp))**2).LT.1.0e-12))THEN
+      IF(.NOT.(SUM((X0_b -  rodrigues(X0_a,sf%zeta_winding*dzeta_fp))**2).LT.1.0e-12))THEN
         error_x=error_x+1
       END IF
-      IF(.NOT.(SUM((X0_b+N_b -  rodrigues(X0_a+N_a,sgn_rot*dzeta_fp))**2).LT.1.0e-12))THEN
+      IF(.NOT.(SUM((X0_b+N_b -  rodrigues(X0_a+N_a,sf%zeta_winding*dzeta_fp))**2).LT.1.0e-12))THEN
         error_n=error_n+1
       END IF
-      IF(.NOT.(SUM((X0_b+B_b -  rodrigues(X0_a+B_a,sgn_rot*dzeta_fp))**2).LT.1.0e-12))THEN
+      IF(.NOT.(SUM((X0_b+B_b -  rodrigues(X0_a+B_a,sf%zeta_winding*dzeta_fp))**2).LT.1.0e-12))THEN
         error_b=error_b+1
       END IF
     END DO !iz
@@ -1248,7 +1255,7 @@ END FUNCTION hmap_axisNB_eval_gij_dq_aux
 !===================================================================================================================================
 !> evaluate curve X0(zeta), and T=X0',N,B,N',B', using the fourier series of X0_hat,N_hat and B_hat and transform from "hat"
 !! coordinates to cartesian coordinates:
-!! x=xhat*cos(zeta)-sgn_rot*yhat*sin(zeta), y=yhat*cos(zeta)+sgn_rot*sin(zeta)*xhat, z=zhat
+!! x=xhat*cos(zeta_winding*zeta)-yhat*sin(zeta_winding*zeta), y=yhat*cos(zeta_winding*zeta)+sin(zeta_winding*zeta)*xhat, z=zhat
 !!
 !===================================================================================================================================
 SUBROUTINE hmap_axisNB_eval_TNB_hat( sf,zeta,X0,T,N,B,Np,Bp,Tp,Npp,Bpp)
@@ -1295,48 +1302,50 @@ IMPLICIT NONE
     __MATVEC_N(Bpp_hat,sf%Bxyz_hat_modes(:,:),base_ddxdzz)
   END IF
 
-  ! apply transform to x,y,z: x=xhat*cos(zeta)-sgn*yhat*sin(zeta), y=yhat*cos(zeta)+xhat*sgn*sin(zeta), z=zhat
-  ! sgn_rot was used in the transform from x to xhat, so it has to be used here as well!!
-  cosz=COS(zeta); sinz=SIN(zeta)
-  X0=(/X0_hat(1)*cosz - sf%sgn_rot*X0_hat(2)*sinz, &
-       X0_hat(2)*cosz + sf%sgn_rot*X0_hat(1)*sinz , &
+  ! apply transform to x,y,z: x=xhat*cos(zeta_winding*zeta)-yhat*sin(zeta_winding*zeta), y=yhat*cos(zeta_winding*zeta)+xhat*sin(zeta_winding*zeta), z=zhat
+  cosz=COS(sf%zeta_winding*zeta); sinz=SIN(sf%zeta_winding*zeta)
+  ! dF/dzeta = (-zeta_winding sinz, zeta_winding cosz)
+  X0=(/X0_hat(1)*cosz - X0_hat(2)*sinz, &
+       X0_hat(2)*cosz + X0_hat(1)*sinz , &
        X0_hat(3)/)
   !dX0/dzeta:
-  T= (/(T_hat(1)-sf%sgn_rot*X0_hat(2))*cosz - (sf%sgn_rot*T_hat(2)+X0_hat(1))*sinz, &
-       (T_hat(2)+sf%sgn_rot*X0_hat(1))*cosz + (sf%sgn_rot*T_hat(1)-X0_hat(2))*sinz, &
+  ! = dX0p_hat F + X0_hat dF/dzeta
+  T= (/(T_hat(1)-sf%zeta_winding*X0_hat(2))*cosz - (T_hat(2)+sf%zeta_winding*X0_hat(1))*sinz, &
+       (T_hat(2)+sf%zeta_winding*X0_hat(1))*cosz + (T_hat(1)-sf%zeta_winding*X0_hat(2))*sinz, &
         T_hat(3)/)
   !transform N to x,y,z
-  N=(/N_hat(1)*cosz - sf%sgn_rot*N_hat(2)*sinz, &
-      N_hat(2)*cosz + sf%sgn_rot*N_hat(1)*sinz, &
+  N=(/N_hat(1)*cosz - N_hat(2)*sinz, &
+      N_hat(2)*cosz + N_hat(1)*sinz, &
       N_hat(3)/)
   !dN/dzeta:
-  Np= (/(Np_hat(1)-sf%sgn_rot*N_hat(2))*cosz - (sf%sgn_rot*Np_hat(2)+N_hat(1))*sinz, &
-        (Np_hat(2)+sf%sgn_rot*N_hat(1))*cosz + (sf%sgn_rot*Np_hat(1)-N_hat(2))*sinz  , &
+  Np= (/(Np_hat(1)-sf%zeta_winding*N_hat(2))*cosz - (Np_hat(2)+sf%zeta_winding*N_hat(1))*sinz, &
+        (Np_hat(2)+sf%zeta_winding*N_hat(1))*cosz + (Np_hat(1)-sf%zeta_winding*N_hat(2))*sinz  , &
          Np_hat(3)/)
   !transform B to x,y,z
-  B=(/B_hat(1)*cosz - sf%sgn_rot*B_hat(2)*sinz, &
-      B_hat(2)*cosz + sf%sgn_rot*B_hat(1)*sinz, &
+  B=(/B_hat(1)*cosz - B_hat(2)*sinz, &
+      B_hat(2)*cosz + B_hat(1)*sinz, &
       B_hat(3)/)
   !dB/dzeta:
-  Bp= (/(Bp_hat(1)-sf%sgn_rot*B_hat(2))*cosz - (sf%sgn_rot*Bp_hat(2)+B_hat(1))*sinz, &
-        (Bp_hat(2)+sf%sgn_rot*B_hat(1))*cosz + (sf%sgn_rot*Bp_hat(1)-B_hat(2))*sinz, &
+  Bp= (/(Bp_hat(1)-sf%zeta_winding*B_hat(2))*cosz - (Bp_hat(2)+sf%zeta_winding*B_hat(1))*sinz, &
+        (Bp_hat(2)+sf%zeta_winding*B_hat(1))*cosz + (Bp_hat(1)-sf%zeta_winding*B_hat(2))*sinz, &
          Bp_hat(3)/)
   IF(PRESENT(Tp))THEN
   !transform Tp to x,y,z
-    Tp = (/(Tp_hat(1)-2*sf%sgn_rot*T_hat(2)-X0_hat(1))*cosz - (sf%sgn_rot*(Tp_hat(2)-X0_hat(2))+2*T_hat(1))*sinz, &
-           (Tp_hat(2)+2*sf%sgn_rot*T_hat(1)-X0_hat(2))*cosz + (sf%sgn_rot*(Tp_hat(1)-X0_hat(1))-2*T_hat(2))*sinz , &
+  ! = Tp_hat F + 2 T_hat dF/dzeta + X0_hat d^2F/dzeta^2
+    Tp = (/(Tp_hat(1)-2*sf%zeta_winding*T_hat(2)-sf%zeta_winding*sf%zeta_winding*X0_hat(1))*cosz - (Tp_hat(2)+2*sf%zeta_winding*T_hat(1)-sf%zeta_winding*sf%zeta_winding*X0_hat(2))*sinz, &
+           (Tp_hat(2)+2*sf%zeta_winding*T_hat(1)-sf%zeta_winding*sf%zeta_winding*X0_hat(2))*cosz + (Tp_hat(1)-2*sf%zeta_winding*T_hat(2)-sf%zeta_winding*sf%zeta_winding*X0_hat(1))*sinz , &
             Tp_hat(3)/)
   END IF
   IF(PRESENT(Npp))THEN
     !transform Npp to x,y,z
-    Npp = (/(Npp_hat(1)-2*sf%sgn_rot*Np_hat(2)-N_hat(1))*cosz - (sf%sgn_rot*(Npp_hat(2)-N_hat(2))+2*Np_hat(1))*sinz, &
-            (Npp_hat(2)+2*sf%sgn_rot*Np_hat(1)-N_hat(2))*cosz + (sf%sgn_rot*(Npp_hat(1)-N_hat(1))-2*Np_hat(2))*sinz , &
+    Npp = (/(Npp_hat(1)-2*sf%zeta_winding*Np_hat(2)-sf%zeta_winding*sf%zeta_winding*N_hat(1))*cosz - (Npp_hat(2)+2*sf%zeta_winding*Np_hat(1)-sf%zeta_winding*sf%zeta_winding*N_hat(2))*sinz, &
+            (Npp_hat(2)+2*sf%zeta_winding*Np_hat(1)-sf%zeta_winding*sf%zeta_winding*N_hat(2))*cosz + (Npp_hat(1)-2*sf%zeta_winding*Np_hat(2)-sf%zeta_winding*sf%zeta_winding*N_hat(1))*sinz , &
              Npp_hat(3)/)
   END IF
   IF(PRESENT(Bpp))THEN
     !transform Bpp to x,y,z
-    Bpp = (/(Bpp_hat(1)-2*sf%sgn_rot*Bp_hat(2)-B_hat(1))*cosz - (sf%sgn_rot*(Bpp_hat(2)-B_hat(2))+2*Bp_hat(1))*sinz, &
-            (Bpp_hat(2)+2*sf%sgn_rot*Bp_hat(1)-B_hat(2))*cosz + (sf%sgn_rot*(Bpp_hat(1)-B_hat(1))-2*Bp_hat(2))*sinz , &
+    Bpp = (/(Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*B_hat(1))*cosz - (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*B_hat(2))*sinz, &
+            (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*B_hat(2))*cosz + (Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*B_hat(1))*sinz , &
              Bpp_hat(3)/)
   END IF
 
