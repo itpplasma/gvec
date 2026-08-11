@@ -1308,7 +1308,7 @@ IMPLICIT NONE
   N = xyzhat_to_xyz(N_hat)
   B = xyzhat_to_xyz(B_hat)
   IF (PRESENT(Tp)) THEN
-    Tp = xyzhatp_to_xyzp(X0_hat, Tp_hat)
+    Tp = xyzhatpp_to_xyzpp(X0_hat, T_hat, Tp_hat)
   END IF
   Np = xyzhatp_to_xyzp(N_hat, Np_hat)
   Bp = xyzhatp_to_xyzp(B_hat, Bp_hat)
@@ -1332,8 +1332,8 @@ CONTAINS
     REAL(wp),DIMENSION(1:3),INTENT(IN) :: Q_hat,Qp_hat
     REAL(wp),DIMENSION(1:3)            :: Qp
     ASSOCIATE(W => sf%zeta_winding)
-      Qp(1) = (Qp_hat(1) - W * Qp_hat(2)) * cosz - (Qp_hat(2) + W * Qp_hat(1)) * sinz
-      Qp(2) = (Qp_hat(2) + W * Qp_hat(1)) * cosz + (Qp_hat(1) - W * Qp_hat(2)) * sinz
+      Qp(1) = (Qp_hat(1) - W * Q_hat(2)) * cosz - (Qp_hat(2) + W * Q_hat(1)) * sinz
+      Qp(2) = (Qp_hat(2) + W * Q_hat(1)) * cosz + (Qp_hat(1) - W * Q_hat(2)) * sinz
       Qp(3) = Qp_hat(3)
     END ASSOCIATE
   END FUNCTION xyzhatp_to_xyzp
