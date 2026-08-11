@@ -1344,8 +1344,8 @@ IMPLICIT NONE
   END IF
   IF(PRESENT(Bpp))THEN
     !transform Bpp to x,y,z
-    Bpp = (/(Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*B_hat(1))*cosz - (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*B_hat(2))*sinz, &
-            (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*B_hat(2))*cosz + (Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*B_hat(1))*sinz , &
+    Bpp = (/(Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*sf%zeta_winding*B_hat(1))*cosz - (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*sf%zeta_winding*B_hat(2))*sinz, &
+            (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*sf%zeta_winding*B_hat(2))*cosz + (Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*sf%zeta_winding*B_hat(1))*sinz , &
              Bpp_hat(3)/)
   END IF
 
