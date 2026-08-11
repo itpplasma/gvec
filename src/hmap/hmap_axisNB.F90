@@ -1302,52 +1302,51 @@ IMPLICIT NONE
     __MATVEC_N(Bpp_hat,sf%Bxyz_hat_modes(:,:),base_ddxdzz)
   END IF
 
-  ! apply transform to x,y,z: x=xhat*cos(zeta_winding*zeta)-yhat*sin(zeta_winding*zeta), y=yhat*cos(zeta_winding*zeta)+xhat*sin(zeta_winding*zeta), z=zhat
   cosz=COS(sf%zeta_winding*zeta); sinz=SIN(sf%zeta_winding*zeta)
-  ! dF/dzeta = (-zeta_winding sinz, zeta_winding cosz)
-  X0=(/X0_hat(1)*cosz - X0_hat(2)*sinz, &
-       X0_hat(2)*cosz + X0_hat(1)*sinz , &
-       X0_hat(3)/)
-  !dX0/dzeta:
-  ! = dX0p_hat F + X0_hat dF/dzeta
-  T= (/(T_hat(1)-sf%zeta_winding*X0_hat(2))*cosz - (T_hat(2)+sf%zeta_winding*X0_hat(1))*sinz, &
-       (T_hat(2)+sf%zeta_winding*X0_hat(1))*cosz + (T_hat(1)-sf%zeta_winding*X0_hat(2))*sinz, &
-        T_hat(3)/)
-  !transform N to x,y,z
-  N=(/N_hat(1)*cosz - N_hat(2)*sinz, &
-      N_hat(2)*cosz + N_hat(1)*sinz, &
-      N_hat(3)/)
-  !dN/dzeta:
-  Np= (/(Np_hat(1)-sf%zeta_winding*N_hat(2))*cosz - (Np_hat(2)+sf%zeta_winding*N_hat(1))*sinz, &
-        (Np_hat(2)+sf%zeta_winding*N_hat(1))*cosz + (Np_hat(1)-sf%zeta_winding*N_hat(2))*sinz  , &
-         Np_hat(3)/)
-  !transform B to x,y,z
-  B=(/B_hat(1)*cosz - B_hat(2)*sinz, &
-      B_hat(2)*cosz + B_hat(1)*sinz, &
-      B_hat(3)/)
-  !dB/dzeta:
-  Bp= (/(Bp_hat(1)-sf%zeta_winding*B_hat(2))*cosz - (Bp_hat(2)+sf%zeta_winding*B_hat(1))*sinz, &
-        (Bp_hat(2)+sf%zeta_winding*B_hat(1))*cosz + (Bp_hat(1)-sf%zeta_winding*B_hat(2))*sinz, &
-         Bp_hat(3)/)
-  IF(PRESENT(Tp))THEN
-  !transform Tp to x,y,z
-  ! = Tp_hat F + 2 T_hat dF/dzeta + X0_hat d^2F/dzeta^2
-    Tp = (/(Tp_hat(1)-2*sf%zeta_winding*T_hat(2)-sf%zeta_winding*sf%zeta_winding*X0_hat(1))*cosz - (Tp_hat(2)+2*sf%zeta_winding*T_hat(1)-sf%zeta_winding*sf%zeta_winding*X0_hat(2))*sinz, &
-           (Tp_hat(2)+2*sf%zeta_winding*T_hat(1)-sf%zeta_winding*sf%zeta_winding*X0_hat(2))*cosz + (Tp_hat(1)-2*sf%zeta_winding*T_hat(2)-sf%zeta_winding*sf%zeta_winding*X0_hat(1))*sinz , &
-            Tp_hat(3)/)
+  X0 = xyzhat_to_xyz(X0_hat)
+  T = xyzhatp_to_xyzp(X0_hat, T_hat)
+  N = xyzhat_to_xyz(N_hat)
+  B = xyzhat_to_xyz(B_hat)
+  IF (PRESENT(Tp)) THEN
+    Tp = xyzhatp_to_xyzp(X0_hat, Tp_hat)
   END IF
-  IF(PRESENT(Npp))THEN
-    !transform Npp to x,y,z
-    Npp = (/(Npp_hat(1)-2*sf%zeta_winding*Np_hat(2)-sf%zeta_winding*sf%zeta_winding*N_hat(1))*cosz - (Npp_hat(2)+2*sf%zeta_winding*Np_hat(1)-sf%zeta_winding*sf%zeta_winding*N_hat(2))*sinz, &
-            (Npp_hat(2)+2*sf%zeta_winding*Np_hat(1)-sf%zeta_winding*sf%zeta_winding*N_hat(2))*cosz + (Npp_hat(1)-2*sf%zeta_winding*Np_hat(2)-sf%zeta_winding*sf%zeta_winding*N_hat(1))*sinz , &
-             Npp_hat(3)/)
+  Np = xyzhatp_to_xyzp(N_hat, Np_hat)
+  Bp = xyzhatp_to_xyzp(B_hat, Bp_hat)
+  IF (PRESENT(Npp)) THEN
+    Npp = xyzhatpp_to_xyzpp(N_hat, Np_hat, Npp_hat)
   END IF
-  IF(PRESENT(Bpp))THEN
-    !transform Bpp to x,y,z
-    Bpp = (/(Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*sf%zeta_winding*B_hat(1))*cosz - (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*sf%zeta_winding*B_hat(2))*sinz, &
-            (Bpp_hat(2)+2*sf%zeta_winding*Bp_hat(1)-sf%zeta_winding*sf%zeta_winding*B_hat(2))*cosz + (Bpp_hat(1)-2*sf%zeta_winding*Bp_hat(2)-sf%zeta_winding*sf%zeta_winding*B_hat(1))*sinz , &
-             Bpp_hat(3)/)
+  IF (PRESENT(Bpp)) THEN
+    Bpp = xyzhatpp_to_xyzpp(B_hat, Bp_hat, Bpp_hat)
   END IF
+
+CONTAINS
+  FUNCTION xyzhat_to_xyz(Q_hat) RESULT(Q)
+    REAL(wp),DIMENSION(1:3),INTENT(IN) :: Q_hat
+    REAL(wp),DIMENSION(1:3)            :: Q
+    Q(1) = Q_hat(1) * cosz - Q_hat(2) * sinz
+    Q(2) = Q_hat(2) * cosz + Q_hat(1) * sinz
+    Q(3) = Q_hat(3)
+  END FUNCTION xyzhat_to_xyz
+
+  FUNCTION xyzhatp_to_xyzp(Q_hat, Qp_hat) RESULT(Qp)
+    REAL(wp),DIMENSION(1:3),INTENT(IN) :: Q_hat,Qp_hat
+    REAL(wp),DIMENSION(1:3)            :: Qp
+    ASSOCIATE(W => sf%zeta_winding)
+      Qp(1) = (Qp_hat(1) - W * Qp_hat(2)) * cosz - (Qp_hat(2) + W * Qp_hat(1)) * sinz
+      Qp(2) = (Qp_hat(2) + W * Qp_hat(1)) * cosz + (Qp_hat(1) - W * Qp_hat(2)) * sinz
+      Qp(3) = Qp_hat(3)
+    END ASSOCIATE
+  END FUNCTION xyzhatp_to_xyzp
+
+  FUNCTION xyzhatpp_to_xyzpp(Q_hat, Qp_hat, Qpp_hat) RESULT(Qpp)
+    REAL(wp),DIMENSION(1:3),INTENT(IN) :: Q_hat, Qp_hat, Qpp_hat
+    REAL(wp),DIMENSION(1:3)            :: Qpp
+    ASSOCIATE(W => sf%zeta_winding)
+      Qpp(1) = (Qpp_hat(1) - 2*W*Qp_hat(2) - W*W*Q_hat(1)) * cosz - (Qpp_hat(2) + 2*W*Qp_hat(1) - W*W*Q_hat(2)) * sinz
+      Qpp(2) = (Qpp_hat(2) + 2*W*Qp_hat(1) - W*W*Q_hat(2)) * cosz + (Qpp_hat(1) - 2*W*Qp_hat(2) - W*W*Q_hat(1)) * sinz
+      Qpp(3) = Qpp_hat(3)
+    END ASSOCIATE
+  END FUNCTION xyzhatpp_to_xyzpp
 
 END SUBROUTINE hmap_axisNB_eval_TNB_hat
 
