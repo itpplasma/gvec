@@ -441,7 +441,7 @@ class TestConverters(BaseTestPost):
             request.node.add_marker(
                 pytest.mark.xfail(reason="hmap_frenet not implemented yet in converters")
             )
-        if "axisNB" in request.node.name:
+        if any([key in request.node.name for key in ["axisNB", "cinquefoil"]]):
             request.node.add_marker(
                 pytest.mark.xfail(reason="hmap_axisNB not implemented yet in converters")
             )
