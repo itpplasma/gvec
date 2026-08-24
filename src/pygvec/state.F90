@@ -87,7 +87,7 @@ SUBROUTINE ReadState(statefile)
   USE MODgvec_ReadState_Vars, ONLY: outputLevel_r
   USE MODgvec_Restart,        ONLY: RestartFromState
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
-  CHARACTER(LEN=255) :: statefile
+  CHARACTER(LEN=*) :: statefile
   ! CODE ------------------------------------------------------------------------------------------------------------------------!
   CALL enter_subregion("read statefile")
   ProjectName='POST_'//TRIM(StateFile(1:INDEX(StateFile,'_State_')-1))

@@ -79,7 +79,7 @@ END SUBROUTINE InitRestart
 !===================================================================================================================================
 SUBROUTINE WriteStateToASCII(dofs_in,fileID)
 ! MODULES
-USE MODgvec_Globals,ONLY:Unit_stdOut,PI,TWOPI,GETFREEUNIT
+USE MODgvec_Globals,ONLY:Unit_stdOut,PI,TWOPI,GETFREEUNIT,MAXLEN
 USE MODgvec_Output_Vars, ONLY:ProjectName,OutputLevel
 USE MODgvec_MHD3D_Vars, ONLY:X1_base,X2_base,LA_base,sgrid,which_hmap
 USE MODgvec_MHD3D_vars, ONLY: Phi_profile, chi_profile, pres_profile, iota_profile
@@ -94,7 +94,7 @@ IMPLICIT NONE
 ! OUTPUT VARIABLES
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
-  CHARACTER(LEN=255)  :: fileString
+  CHARACTER(LEN=MAXLEN)  :: fileString
   INTEGER             :: ioUnit,iMode,is
   REAL(wp)            :: vol,surfAvg,a_minor,r_major
 !===================================================================================================================================
@@ -174,7 +174,7 @@ END SUBROUTINE WriteStateToASCII
 !===================================================================================================================================
 SUBROUTINE RestartFromState(fileString,dofs_r)
 ! MODULES
-USE MODgvec_Globals,ONLY:Unit_stdOut,GETFREEUNIT
+USE MODgvec_Globals,ONLY:Unit_stdOut,GETFREEUNIT,MAXLEN
 USE MODgvec_Output_Vars, ONLY:OutputLevel
 USE MODgvec_MHD3D_Vars,  ONLY:X1_base,X2_base,LA_base,sgrid,hmap
 USE MODgvec_sol_var_MHD3D, ONLY:t_sol_var_MHD3D
@@ -183,7 +183,7 @@ USE MODgvec_readState, ONLY: ReadState,Finalize_ReadState
 IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT VARIABLES
-  CHARACTER(LEN=255)    , INTENT(IN   ) :: fileString
+  CHARACTER(LEN=*)         , INTENT(IN   ) :: fileString
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! OUTPUT VARIABLES
   CLASS(t_sol_var_MHD3D), INTENT(INOUT) :: dofs_r
