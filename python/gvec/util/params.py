@@ -418,6 +418,28 @@ def read_parameter_file_ini(path: str | Path) -> CaseInsensitiveDict:
 
 
 def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
+    def rectangular_boundary_values(value) -> np.ndarray:
+        """Convert f90nml's sparse, possibly ragged boundary array to 2-D."""
+        if isinstance(value, np.ndarray):
+            rows = value.tolist()
+        else:
+            rows = value
+
+        if not isinstance(rows, (list, tuple)):
+            return np.asarray(rows, dtype=float).reshape(1, 1)
+        if not rows:
+            return np.empty((0, 0), dtype=float)
+        if not all(isinstance(row, (list, tuple, np.ndarray)) for row in rows):
+            return np.asarray(rows, dtype=float).reshape(-1, 1)
+
+        width = max(len(row) for row in rows)
+        rectangular = np.full((len(rows), width), np.nan)
+        for row_index, row in enumerate(rows):
+            for column_index, entry in enumerate(row):
+                if entry is not None:
+                    rectangular[row_index, column_index] = entry
+        return rectangular
+
     def as_list(value) -> list:
         if isinstance(value, list):
             return value
@@ -511,7 +533,11 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
     ]:
         if vmec_key not in nml:
             continue
-        values = np.array(nml[vmec_key], dtype=float)
+        # f90nml represents sparse VMEC assignments as ragged lists (for
+        # example ``RBC(0, 0)``, ``RBC(0, 1)``, ``RBC(1, 1)``).  Converting
+        # those lists directly with ``np.array(..., dtype=float)`` raises a
+        # ValueError before the converter can preserve the supplied modes.
+        values = rectangular_boundary_values(nml[vmec_key])
         m0, n0 = 0, -N
         if "_start_index" in nml and vmec_key in nml["_start_index"]:
             n0, m0 = nml["_start_index"][vmec_key]
