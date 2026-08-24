@@ -205,7 +205,7 @@ def test_unstringify_mn():
 
 
 def test_parameters_from_vmec_accepts_sparse_boundary_arrays():
-    """Sparse VMEC Fourier assignments are converted without a ragged-array error."""
+    """Sparse and inline VMEC Fourier assignments convert without ragged errors."""
     import f90nml
 
     nml = f90nml.reads(
@@ -213,13 +213,10 @@ def test_parameters_from_vmec_accepts_sparse_boundary_arrays():
 &INDATA
   MPOL = 4
   NTOR = 3
-  RBC(0, 0) = 5.5
-  RBC(0, 1) = 0.7
-  RBC(1, 1) = 0.05
-  RBC(0, 2) = 0.03
-  ZBS(0, 1) = 0.7
-  ZBS(1, 1) = -0.04
-  ZBS(0, 2) = 0.02
+  RBC(0, 0) = 5.5  ZBS(0, 0) = 0.0
+  RBC(0, 1) = 0.7  ZBS(0, 1) = 0.7
+  RBC(1, 1) = 0.05 ZBS(1, 1) = -0.04
+  RBC(0, 2) = 0.03 ZBS(0, 2) = 0.02
 /
 """
     )["indata"]
