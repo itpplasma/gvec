@@ -7,7 +7,7 @@
 !>
 !!# Module **SFL boozer**
 !!
-!! Transform to Straight-field line  BOOZER coordinates
+!! Transform to Straight-field line  BOOZER or HAMADA coordinates
 !!
 !===================================================================================================================================
 MODULE MODgvec_SFL_Boozer
@@ -23,10 +23,13 @@ IMPLICIT NONE
 PRIVATE
 
 !===================================================================================================================================
-!> Class for the computation of the boozer transform, on a given radial grid positions rho, with iota(rho) phiPrime(rho) values.
+!> Class for the computation of the boozer (or hamada) transform, on a given radial grid positions rho,
+!! with iota(rho) phiPrime(rho) values.
 !!
 !! theta^Boozer=theta+lambda+iota(rho)*nu(rho,theta,zeta)
 !! zeta^Boozer =zeta                  +nu(rho,theta,zeta)
+!!
+!! The same form is used for Hamada coordinates (whichSFL=3), only the computation of nu differs.
 !===================================================================================================================================
 TYPE :: t_sfl_boozer
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -34,6 +37,7 @@ TYPE :: t_sfl_boozer
   !---------------------------------------------------------------------------------------------------------------------------------
   !input parameters
   INTEGER  :: nrho       !! number of rho positions
+  INTEGER  :: whichSFL   !! =2: Boozer coordinates, =3: Hamada coordinates
   LOGICAL  :: relambda   !! if =True, J^s=0 will be recomputed, for exact integrability condition of boozer transform  (but slower!)
   TYPE(t_fbase) :: nu_fbase
 
@@ -78,7 +82,7 @@ CONTAINS
 !> initialize sfl boozer class
 !!
 !===================================================================================================================================
-FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiPrime,relambda_in) RESULT(sf)
+FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiPrime,relambda_in,whichSFL_in) RESULT(sf)
   ! MODULES
   USE MODgvec_Globals, ONLY: UNIT_stdOut
   USE MODgvec_fbase, ONLY: t_fBase
@@ -99,6 +103,7 @@ FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiP
   LOGICAL, INTENT(IN),OPTIONAL :: relambda_in  !! DEFAULT=TRUE: lambda is recomputed on the given fourier resolution, RECOMMENDED
                                    !!   for exact integrability condition of boozer transform, but slower.
                                    !! FALSE: lambda from equilibrium solution is taken.
+  INTEGER, INTENT(IN),OPTIONAL :: whichSFL_in  !! DEFAULT=2: Boozer coordinates, =3: Hamada coordinates
   ! OUTPUT VARIABLES -------------------------!
   TYPE(t_sfl_boozer) :: sf !! self
   ! CODE --------------------------------------------------------------------------------------------------------------------------!
@@ -116,6 +121,14 @@ FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiP
   ELSE
     sf%relambda = .TRUE. ! default
   END IF
+  IF(PRESENT(whichSFL_in)) THEN
+    sf%whichSFL=whichSFL_in
+  ELSE
+    sf%whichSFL = 2 ! default: Boozer
+  END IF
+  IF((sf%whichSFL.NE.2).AND.(sf%whichSFL.NE.3)) CALL abort(__STAMP__, &
+         "sfl_boozer_new: whichSFL must be 2 (Boozer) or 3 (Hamada)", &
+         TypeInfo="InvalidParameterError")
   sf%nu_fbase = t_fBase(mn_max,mn_nyq,nfp,sin_cos,.TRUE.)
   sf%hmap => hmap_in
   CALL hmap_new_auxvar(sf%hmap,sf%nu_fbase%x_IP(2,:),sf%hmap_xv,.TRUE.)
@@ -163,6 +176,8 @@ END SUBROUTINE sfl_boozer_free
 !! which is equivalent to impose J^s=0.
 !! now if lambda is recomputed via a projection of J^s=0 onto the same fourier series as nu, the compatibility condition is
 !! EXACTLY(!) fullfilled.
+!!
+!! For Hamada coordinates (whichSFL=3), nu is instead computed from the Jacobian, see MODgvec_SFL_Hamada.
 !===================================================================================================================================
 SUBROUTINE Get_Boozer_sinterp(sf,X1_base_in,X2_base_in,LA_base_in,X1_in,X2_in,LA_in)
   ! MODULES
@@ -171,6 +186,7 @@ SUBROUTINE Get_Boozer_sinterp(sf,X1_base_in,X2_base_in,LA_base_in,X1_in,X2_in,LA
   USE MODgvec_fbase,ONLY: t_fbase, sin_cos_map
   USE MODgvec_LinAlg
   USE MODgvec_lambda_solve, ONLY:  Lambda_setup_and_solve
+  USE MODgvec_SFL_Hamada, ONLY: get_nu_hamada
   IMPLICIT NONE
     ! INPUT VARIABLES -------------------------!
     CLASS(t_base),INTENT(IN) :: X1_base_in,X2_base_in,LA_base_in   !< base classes for input U_in
@@ -194,7 +210,7 @@ SUBROUTINE Get_Boozer_sinterp(sf,X1_base_in,X2_base_in,LA_base_in,X1_in,X2_in,LA
     REAL(wp),DIMENSION(sf%nu_fbase%modes) :: nu_m,nu_n
     REAL(wp),DIMENSION(sf%nu_fbase%mn_IP) :: Bcov_thet_IP,Bcov_zeta_IP
     REAL(wp),DIMENSION(sf%nu_fbase%mn_IP) :: dLAdthet_IP,dLAdzeta_IP
-    REAL(wp),DIMENSION(sf%nu_fbase%mn_IP) :: LA_IP,fm_IP,fn_IP,gam_tt,gam_tz,gam_zz
+    REAL(wp),DIMENSION(sf%nu_fbase%mn_IP) :: LA_IP,fm_IP,fn_IP,gam_tt,gam_tz,gam_zz,Jac_IP
     REAL(wp),DIMENSION(sf%nu_fbase%mn_IP) :: X1_IP,dX1ds_IP,dX1dthet,dX1dzeta
     REAL(wp),DIMENSION(sf%nu_fbase%mn_IP) :: X2_IP,dX2ds_IP,dX2dthet,dX2dzeta
     TYPE(t_fbase),ALLOCATABLE             :: X1_fbase_nyq
@@ -206,7 +222,8 @@ SUBROUTINE Get_Boozer_sinterp(sf,X1_base_in,X2_base_in,LA_base_in,X1_in,X2_in,LA
                    'GET BOOZER ANGLE TRANSFORM,  sf%nu_fbase%nfp not the same as in X1')
     mn_max(1:2)=sf%nu_fbase%mn_max
     mn_nyq(1:2)=sf%nu_fbase%mn_nyq
-    SWRITE(UNIT_StdOut,'(A,A,A,I4,3(A,2I6))')'GET BOOZER ANGLE TRANSFORM (', &
+    SWRITE(UNIT_StdOut,'(5A,I4,3(A,2I6))')'GET ',TRIM(MERGE('BOOZER','HAMADA',sf%whichSFL.EQ.2)), &
+                                             ' ANGLE TRANSFORM (', &
                                              TRIM(MERGE('RECOMPUTE      ','USE EQUILIBRIUM',sf%relambda)),' LAMBDA!), nfp=',nfp, &
                                             ', mn_max_in=',LA_base_in%f%mn_max,', mn_max_out=',mn_max,', mn_int=',mn_nyq
     __PERFON('get_boozer')
@@ -283,12 +300,13 @@ SUBROUTINE Get_Boozer_sinterp(sf,X1_base_in,X2_base_in,LA_base_in,X1_in,X2_in,LA
   !$OMP PARALLEL DO &
   !$OMP   SCHEDULE(STATIC) DEFAULT(NONE)  &
   !$OMP   PRIVATE(i_mn,detJ)  &
-  !$OMP   SHARED(sf,mn_IP,dX1ds_IP,dX2ds_IP,dX1dthet,dX2dthet,dX1dzeta,dX2dzeta,X1_IP,X2_IP,gam_tt,gam_tz,gam_zz)
+  !$OMP   SHARED(sf,mn_IP,dX1ds_IP,dX2ds_IP,dX1dthet,dX2dthet,dX1dzeta,dX2dzeta,X1_IP,X2_IP,gam_tt,gam_tz,gam_zz,Jac_IP)
       !evaluate metrics on (theta,zeta)
       DO i_mn=1,mn_IP
 
         detJ        =  ( dX1ds_IP(i_mn)*dX2dthet(i_mn) -dX2ds_IP(i_mn)*dX1dthet(i_mn) ) &
                      * sf%hmap%eval_Jh_aux(X1_IP(i_mn),X2_IP(i_mn),sf%hmap_xv(i_mn)) !Jp*Jh
+        Jac_IP(i_mn) = detJ
         gam_tt(i_mn)  = sf%hmap%eval_gij_aux(dX1dthet(i_mn),dX2dthet(i_mn),0.0_wp, &
                                               X1_IP  (i_mn), X2_IP(  i_mn),        &
                                              dX1dthet(i_mn),dX2dthet(i_mn),0.0_wp, &
@@ -318,6 +336,15 @@ SUBROUTINE Get_Boozer_sinterp(sf,X1_base_in,X2_base_in,LA_base_in,X1_in,X2_in,LA
         LA_IP(:)    = LA_fbase_nyq%evalDOF_IP(         0,LA_s(:,irho))
         dLAdthet_IP = LA_fbase_nyq%evalDOF_IP(DERIV_THET,LA_s(:,irho))
         dLAdzeta_IP = LA_fbase_nyq%evalDOF_IP(DERIV_ZETA,LA_s(:,irho))
+      END IF
+
+      IF(sf%whichSFL.EQ.3)THEN
+        __PERFOFF('eval_bsub')
+        __PERFON('hamada')
+        CALL get_nu_hamada(sf%nu_fbase,iota_int,LA_IP,dLAdthet_IP,Jac_IP,sf%nu(:,irho))
+        __PERFOFF('hamada')
+        CALL ProgressBar(irho,sf%nrho)
+        CYCLE
       END IF
 
 

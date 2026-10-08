@@ -945,10 +945,10 @@ SUBROUTINE evaluate_profile(n_s, s, deriv, var, result)
 END SUBROUTINE evaluate_profile
 
 !================================================================================================================================!
-!> initialize a SFL-Boozer object, with some parameters taken from the state (globals)
+!> initialize a SFL-Boozer object for the Boozer or Hamada potential, with some parameters taken from the state (globals)
 !> Note: as of v0.2.16 (Thanks Christopher Albert) f90wrap supports ALLOCATABLEs in the return value
 !================================================================================================================================!
-FUNCTION init_boozer(mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda) RESULT(sfl_boozer)
+FUNCTION init_sfl_potential(mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda, whichSFL) RESULT(sfl_boozer)
   ! MODULES
   USE MODgvec_SFL_Boozer,   ONLY: t_sfl_boozer
   USE MODgvec_MHD3D_vars,     ONLY: hmap, iota_profile, Phi_profile
@@ -958,6 +958,7 @@ FUNCTION init_boozer(mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda) RESULT(sf
   CHARACTER(LEN=8), INTENT(IN)   :: sin_cos      !! can be either only sine: " _sin_" only cosine: " _cos_" or full: "_sin_cos_"
   REAL, INTENT(IN), DIMENSION(nrho) :: rho_pos                  !! radial positions
   LOGICAL, INTENT(IN) :: relambda                               !! recompute lambda flag
+  INTEGER, INTENT(IN) :: whichSFL                               !! =2: Boozer, =3: Hamada potential
   ! LOCAL VARIABLES -------------------------------------------------------------------------------------------------------------!
   INTEGER :: i
   REAL, DIMENSION(nrho) :: iota, phiPrime                       ! iota and phiPrime
@@ -966,10 +967,10 @@ FUNCTION init_boozer(mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda) RESULT(sf
     iota(i) = iota_profile%eval_at_rho(rho_pos(i))
     phiPrime(i) = Phi_profile%eval_at_rho(rho_pos(i),deriv=1)
   END DO
-  sfl_boozer = t_sfl_boozer(mn_max, mn_nyq, nfp, sin_cos, hmap, nrho, rho_pos, iota, phiPrime, relambda)
-END FUNCTION init_boozer
+  sfl_boozer = t_sfl_boozer(mn_max, mn_nyq, nfp, sin_cos, hmap, nrho, rho_pos, iota, phiPrime, relambda, whichSFL)
+END FUNCTION init_sfl_potential
 
-SUBROUTINE get_boozer(sfl_boozer)
+SUBROUTINE get_sfl_potential(sfl_boozer)
   ! MODULES
   USE MODgvec_SFL_Boozer,   ONLY: t_sfl_boozer
   USE MODgvec_MHD3D_vars,     ONLY: X1_base, X2_base, LA_base
@@ -979,7 +980,7 @@ SUBROUTINE get_boozer(sfl_boozer)
   ! CODE ------------------------------------------------------------------------------------------------------------------------!
   CALL sfl_boozer%get_boozer(X1_base, X2_base, LA_base,&
   functional%minimizer%vars%dofs(0)%X1, functional%minimizer%vars%dofs(0)%X2, functional%minimizer%vars%dofs(0)%LA)
-END SUBROUTINE get_boozer
+END SUBROUTINE get_sfl_potential
 
 
 !================================================================================================================================!
