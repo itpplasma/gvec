@@ -270,10 +270,10 @@ def plot_on_flux_surface(
     subplot_grid: list[int] | None = None,
     share_contours: bool = False,
     levels: int | np.ndarray | list = 10,
-    sfl: Literal["pest", "boozer"] | None = "boozer",
+    sfl: Literal["pest", "boozer", "hamada"] | None = "boozer",
     style: Literal["contour", "filled-contour"] = "contour",
     plot_kwargs: dict = dict(),
-    **boozer_kwargs,
+    **sfl_kwargs,
 ):
     """
     Plot an equilibrium quantity over the two angles $(\\vartheta, \\zeta)$ of a flux surface at (a) given ``rho`` value(s). Alternatively, plot
@@ -301,7 +301,7 @@ def plot_on_flux_surface(
         If ``int`` then chooses number of levels in the contour plot. If an ``numpy.ndarray`` or ``list`` then plots contours at given values.
         Default is ``10``
     sfl : str, optional
-        Plot surfaces in ``"boozer"``, ``"pest"`` or regular $(\\theta,\\zeta)$ (``"None"``) coordinates.
+        Plot surfaces in ``"boozer"``, ``"pest"``, ``"hamada"`` or regular $(\\theta,\\zeta)$ (``"None"``) coordinates.
         Default is ``"boozer"``
     style : str, optional
         Use ``"contour"`` (``False``) or ``"filled-contour"`` (``True``) in plotting.
@@ -309,10 +309,10 @@ def plot_on_flux_surface(
     plot_kwargs: dict, optional
         Any ``**kwargs`` to send to the ``plt.figure()`` function.
         For example ``plot_kwargs={'figsize': (8,8)}``. See the `matplotlib documentation <https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.figure.html>`_ for a list of kwargs.
-    boozer_kwargs : optional
-        Additional keyword arguments to pass to the ``get_boozer`` method of the ``state`` object.
-        These can be used to specify the Boozer transform parameters.
-        For example the maximum mode number factor ``boozer_kwargs={'MNfactor': 3}``.
+    sfl_kwargs : optional
+        Additional keyword arguments to pass to the ``get_sfl_potential`` method of the ``state`` object,
+        for ``sfl="boozer"`` or ``sfl="hamada"``. These can be used to specify the transform parameters.
+        For example the maximum mode number factor ``MNfactor=3``.
 
 
     Returns
@@ -349,15 +349,15 @@ def plot_on_flux_surface(
     theta = np.linspace(0.0, 2 * np.pi, ntheta)
     zeta = np.linspace(0.0, 2 * np.pi / state.nfp, nzeta)
     if sfl:
-        # Reduce some cost of the boozer computation
-        if sfl == "boozer":
-            if "MNfactor" not in boozer_kwargs:
-                boozer_kwargs["MNfactor"] = 3
-            if "radial_derivative" not in boozer_kwargs:
-                boozer_kwargs["radial_derivative"] = False
+        # Reduce some cost of the boozer or hamada computation
+        if sfl in ["boozer", "hamada"]:
+            if "MNfactor" not in sfl_kwargs:
+                sfl_kwargs["MNfactor"] = 3
+            if "radial_derivative" not in sfl_kwargs:
+                sfl_kwargs["radial_derivative"] = False
 
         evaluations = state.evaluate_sfl(
-            *quantities_eval, rho=rho, theta=theta, zeta=zeta, sfl=sfl, **boozer_kwargs
+            *quantities_eval, rho=rho, theta=theta, zeta=zeta, sfl=sfl, **sfl_kwargs
         )
     else:
         evaluations = state.evaluate(*quantities_eval, rho=rho, theta=theta, zeta=zeta)
@@ -403,6 +403,9 @@ def plot_on_flux_surface(
         if sfl == "boozer":
             theta_vals = evaluations_i.theta_B
             zeta_vals = evaluations_i.zeta_B
+        elif sfl == "hamada":
+            theta_vals = evaluations_i.theta_H
+            zeta_vals = evaluations_i.zeta_H
         elif sfl == "pest":
             theta_vals = evaluations_i.theta_P
             zeta_vals = evaluations_i.zeta
@@ -454,11 +457,11 @@ def plot_fourier_on_surface(
     rho: float = 1.0,
     ntheta: int = 101,
     nzeta: int = 101,
-    sfl: Literal["pest", "boozer"] | None = None,
+    sfl: Literal["pest", "boozer", "hamada"] | None = None,
     limit: float | None = 1e-15,
     contour: bool = False,
     plot_kwargs: dict[str] = {},
-    **boozer_kwargs,
+    **sfl_kwargs,
 ):
     """
     Diagnostic plot for plotting the Fourier modes of a given quantitity on a flux surface.
@@ -479,7 +482,7 @@ def plot_fourier_on_surface(
         Resolution in ``zeta``.
         Default is ``101``
     sfl : str, optional
-        Plot surfaces in ``"boozer"``, ``"pest"`` or regular $\\theta-\\zeta$ (``None``) coordinates.
+        Plot surfaces in ``"boozer"``, ``"pest"``, ``"hamada"`` or regular $\\theta-\\zeta$ (``None``) coordinates.
         Default is ``"boozer"``
     limit: float, optional
         Cut-off value for the Fourier amplitudes to plot.
@@ -489,10 +492,10 @@ def plot_fourier_on_surface(
     plot_kwargs: dict, optional
         Any ``**kwargs`` to send to the ``plt.figure()`` function.
         For example ``plot_kwargs={'figsize': (8,8)}``. See the `matplotlib documentation <https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.figure.html>`_ for a list of kwargs.
-    boozer_kwargs : optional
-        Additional keyword arguments to pass to the ``get_boozer`` method of the ``state`` object.
-        These can be used to specify the Boozer transform parameters.
-        For example the maximum mode number factor ``boozer_kwargs={'MNfactor': 3}``.
+    sfl_kwargs : optional
+        Additional keyword arguments to pass to the ``get_sfl_potential`` method of the ``state`` object,
+        for ``sfl="boozer"`` or ``sfl="hamada"``. These can be used to specify the transform parameters.
+        For example the maximum mode number factor ``MNfactor=3``.
 
 
     Returns
@@ -506,7 +509,7 @@ def plot_fourier_on_surface(
         evaluations = state.evaluate(*quantities, rho=rho, theta=ntheta, zeta=nzeta)
     else:
         evaluations = state.evaluate_sfl(
-            *quantities, rho=rho, theta=ntheta, zeta=nzeta, sfl=sfl, **boozer_kwargs
+            *quantities, rho=rho, theta=ntheta, zeta=nzeta, sfl=sfl, **sfl_kwargs
         )
     evaluations = evaluations[quantities]
 
@@ -544,6 +547,7 @@ def plot_fourier_on_surface(
         None: "logical coordinates",
         "pest": "PEST coordinates",
         "boozer": "Boozer coordinates",
+        "hamada": "Hamada coordinates",
     }
     fig.suptitle(
         f"Fourier spectrum of ${symbol}$ on flux surface $\\rho={rho}$ in {coords[sfl]}"
