@@ -385,6 +385,22 @@ def test_get_boozer_angles(teststate):
     assert tz.shape == (2, 3, 4)
 
 
+def test_get_sfl_potential_hamada(teststate):
+    rho = [0.4, 0.9]
+    hamada = teststate.get_sfl_potential(rho, "hamada", 2)
+    assert isinstance(hamada, gvec.lib.t_sfl_boozer)
+    assert hamada.whichsfl == 3
+    tz_H = np.asarray([[0.1, 0.5, 0.9], [0.2, 0.4, 0.8]])
+    tz = teststate.get_boozer_angles(hamada, tz_H)
+    assert tz.shape == (2, 3, 2)
+    iota = teststate.evaluate_profile("iota", np.asarray(rho))
+    for r in range(len(rho)):
+        LA = teststate.evaluate_boozer_list_tz_all(hamada, "LA", [r], tz[:, :, r])[0][0]
+        NU = teststate.evaluate_boozer_list_tz_all(hamada, "NU", [r], tz[:, :, r])[0][0]
+        np.testing.assert_allclose(tz[0, :, r] + LA + iota[r] * NU, tz_H[0], atol=1e-12)
+        np.testing.assert_allclose(tz[1, :, r] + NU, tz_H[1], atol=1e-12)
+
+
 def test_get_pest_angles_1D(teststate):
     rho = np.asarray([0.1, 0.4, 0.6, 1.0])
     theta_P = np.asarray([0.1, 0.5, 0.9])
