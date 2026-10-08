@@ -16,7 +16,105 @@ from ._binding import with_binding
 
 logger = logging.getLogger("gvec.state")
 
-# === Boozer Potential === #
+# === Boozer & Hamada Potential === #
+
+
+@with_binding
+def get_sfl_potential(
+    self,
+    rho: np.ndarray,
+    sfl: Literal["boozer", "hamada"],
+    MNfactor: int = 5,
+    *,
+    M: int | None = None,
+    N: int | None = None,
+    M_nyq: int | None = None,
+    N_nyq: int | None = None,
+    sincos: Literal["sin", "cos", "sincos"] = "sin",
+    recompute_lambda: bool = True,
+):
+    r"""
+    Initialize a new Boozer or Hamada potential with M poloidal and N toroidal nodes for all fluxsurfaces given by rho.
+
+    Both straight-fieldline coordinates are defined by a potential :math:`\nu` with
+    :math:`\theta^\star=\theta+\lambda+\iota\nu` and :math:`\zeta^\star=\zeta+\nu`.
+    The Boozer potential :math:`\nu_B` makes the covariant magnetic field components flux functions,
+    the Hamada potential :math:`\nu_H` makes the Jacobian a flux function.
+
+    Parameters
+    ----------
+    rho
+        Array of (radius-like) flux surface labels.
+    sfl
+        The type of straight-fieldline coordinates, ``"boozer"`` or ``"hamada"``.
+    MNfactor
+        Multiplication factor between the maximum M, N of the equilbrium and the maximum M, N of the potential.
+        Only used if M, N are not explicitly given.
+    M
+        Number of poloidal nodes of the potential :math:`\nu`. Defaults to the maximum number of nodes of the basis.
+    N
+        Number of toroidal nodes of the potential :math:`\nu`. Defaults to the maximum number of nodes of the basis.
+
+    Returns
+    -------
+    sfl_potential
+        Straight-fieldline potential object (wrapped Fortran object), for ``get_boozer_angles`` and ``evaluate_boozer_list_tz_all``.
+    """
+    # --- Defaults --- #
+    M_max, N_max = self.get_mn_max()
+    _, M_nyq_LA, N_nyq_LA = _state.get_integration_points_num("LA")
+
+    if M is None:
+        M = MNfactor * M_max
+    if N is None:
+        N = MNfactor * N_max
+    if M_nyq is None:
+        M_nyq = max(4 * M + 1, M_nyq_LA)
+    if N_nyq is None:
+        N_nyq = max(4 * N + 1, N_nyq_LA)
+
+    # --- Argument Handling --- #
+    if not isinstance(M, int) or not isinstance(N, int) or M < 0 or N < 0:
+        raise ValueError("M and N must be non-negative integers (or None).")
+    if M < M_max or N < N_max:
+        raise ValueError(
+            f"The number of poloidal and toroidal nodes for the potential must be equal or larger to those of the original lambda: ({M}, {N}) < ({M_max}, {N_max})"
+        )
+    if (
+        not isinstance(M_nyq, int)
+        or not isinstance(N_nyq, int)
+        or M_nyq < min(2 * M + 1, M_nyq_LA)
+        or N_nyq < min(2 * N + 1, N_nyq_LA)
+    ):
+        raise ValueError(
+            f"M_nyq and N_nyq must be integers larger than min({2 * M + 1=}, {M_nyq_LA=}) and min({2 * N + 1=}, {N_nyq_LA=}) (or None)."
+        )
+
+    rho = np.asfortranarray(rho, dtype=np.float64)
+    if rho.ndim != 1 or rho.max() > 1.0 or rho.min() < 1e-4:
+        raise ValueError("rho must be a 1D array in the range [1e-4, 1].")
+
+    if sincos not in ["sin", "cos", "sincos"]:
+        raise ValueError("sincos must be 'sin', 'cos', or 'sincos'.")
+    sincos = {"sin": " _sin_", "cos": " _cos_", "sincos": "_sin_cos_"}[sincos]
+
+    recompute_lambda = bool(recompute_lambda)
+
+    if sfl not in ["boozer", "hamada"]:
+        raise ValueError("sfl must be 'boozer' or 'hamada'.")
+    whichSFL = {"boozer": 2, "hamada": 3}[sfl]
+
+    # --- Create & compute potential --- #
+    logger.debug(f"Initializing new {sfl} potential.")
+    sfl_potential = _state.init_sfl_potential(
+        (M, N), (M_nyq, N_nyq), sincos, rho.size, rho, recompute_lambda, whichSFL
+    )
+    self._children.append(sfl_potential)
+    logger.debug(f"Computing {sfl} potential {sfl_potential!r}")
+    _state.get_sfl_potential(sfl_potential)
+
+    # ToDo: wrap sfl_potential again to make it safer?
+    return sfl_potential
 
 
 @with_binding
@@ -52,57 +150,17 @@ def get_boozer(
     sfl_boozer
         Straight-fieldline Boozer object (wrapped Fortran object).
     """
-    # --- Defaults --- #
-    M_max, N_max = self.get_mn_max()
-    _, M_nyq_LA, N_nyq_LA = _state.get_integration_points_num("LA")
-
-    if M is None:
-        M = MNfactor * M_max
-    if N is None:
-        N = MNfactor * N_max
-    if M_nyq is None:
-        M_nyq = max(4 * M + 1, M_nyq_LA)
-    if N_nyq is None:
-        N_nyq = max(4 * N + 1, N_nyq_LA)
-
-    # --- Argument Handling --- #
-    if not isinstance(M, int) or not isinstance(N, int) or M < 0 or N < 0:
-        raise ValueError("M and N must be non-negative integers (or None).")
-    if M < M_max or N < N_max:
-        raise ValueError(
-            f"The number of poloidal and toroidal nodes for the Boozer potential must be equal or larger to those of the original lambda: ({M}, {N}) < ({M_max}, {N_max})"
-        )
-    if (
-        not isinstance(M_nyq, int)
-        or not isinstance(N_nyq, int)
-        or M_nyq < min(2 * M + 1, M_nyq_LA)
-        or N_nyq < min(2 * N + 1, N_nyq_LA)
-    ):
-        raise ValueError(
-            f"M_nyq and N_nyq must be integers larger than min({2 * M + 1=}, {M_nyq_LA=}) and min({2 * N + 1=}, {N_nyq_LA=}) (or None)."
-        )
-
-    rho = np.asfortranarray(rho, dtype=np.float64)
-    if rho.ndim != 1 or rho.max() > 1.0 or rho.min() < 1e-4:
-        raise ValueError("rho must be a 1D array in the range [1e-4, 1].")
-
-    if sincos not in ["sin", "cos", "sincos"]:
-        raise ValueError("sincos must be 'sin', 'cos', or 'sincos'.")
-    sincos = {"sin": " _sin_", "cos": " _cos_", "sincos": "_sin_cos_"}[sincos]
-
-    recompute_lambda = bool(recompute_lambda)
-
-    # --- Create & compute Boozer potential --- #
-    logger.debug("Initializing new Boozer potential.")
-    sfl_boozer = _state.init_boozer(
-        (M, N), (M_nyq, N_nyq), sincos, rho.size, rho, recompute_lambda
+    return self.get_sfl_potential(
+        rho,
+        "boozer",
+        MNfactor,
+        M=M,
+        N=N,
+        M_nyq=M_nyq,
+        N_nyq=N_nyq,
+        sincos=sincos,
+        recompute_lambda=recompute_lambda,
     )
-    self._children.append(sfl_boozer)
-    logger.debug(f"Computing Boozer potential {sfl_boozer!r}")
-    _state.get_boozer(sfl_boozer)
-
-    # ToDo: wrap sfl_boozer again to make it safer?
-    return sfl_boozer
 
 
 @with_binding
@@ -113,12 +171,12 @@ def get_boozer_angles(
     rad: int | None = None,
 ):
     """
-    Find the logical angles (theta, zeta) for the corresponding (theta_B, zeta_B) coordinates on the Boozer surface.
+    Find the logical angles (theta, zeta) for the corresponding Boozer or Hamada angles on the flux surfaces.
 
     Parameters
     ----------
     sfl_boozer : lib.Modgvec_Sfl_Boozer.t_sfl_boozer
-        The Boozer potential object to use.
+        The Boozer or Hamada potential object to use, see ``get_sfl_potential``.
     tz_list : 2D array or Sequence of shape (2, n)
         The list of (theta_B, zeta_B) coordinates for which to find the logical angles.
         The first row contains theta_B and the second row contains zeta_B.

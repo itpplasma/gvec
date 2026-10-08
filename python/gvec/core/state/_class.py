@@ -140,9 +140,14 @@ class State:
         evaluate_rho2_profile,
     )
 
-    # === Boozer Potential === #
+    # === Boozer & Hamada Potential === #
 
-    from ._sfl import get_boozer, get_boozer_angles, evaluate_boozer_list_tz_all
+    from ._sfl import (
+        get_sfl_potential,
+        get_boozer,
+        get_boozer_angles,
+        evaluate_boozer_list_tz_all,
+    )
 
     # === Straight-Fieldline PEST angles === #
 

@@ -22,6 +22,7 @@ from gvec.core.compute import (
     fluxsurface_integral,
     Evaluations,
     EvaluationsBoozer,
+    EvaluationsHamada,
     EvaluationsPEST,
     table_of_quantities,
 )
