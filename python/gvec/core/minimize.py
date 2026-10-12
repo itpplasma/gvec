@@ -715,7 +715,7 @@ class MinimizationState(State):
         """
         ev_gvec = (
             self.evaluate("B", "p", "normal", "Phi_edge", rho=1.0)
-            .squeeze()
+            .isel(rad=0)  # not squeeze(): an axisymmetric state has a single toroidal point
             .transpose("xyz", "tor", "pol")
         )
         B_gvec_2 = (ev_gvec.B**2).sum(dim="xyz")

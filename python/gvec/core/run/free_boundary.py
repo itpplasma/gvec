@@ -37,6 +37,7 @@ DEFAULT_BLEND_DEPTH = 0.6
 DEFAULT_GTOL = 1e-8
 DEFAULT_XTOL = 1e-5
 DEFAULT_DIGITS_BIEST = 8
+BIEST_MIN_NZETA = 6  # BIEST asserts Nt >= PATCH_DIM (= 6) toroidal points per field period
 DEFAULT_FB_TOLERANCE = 1e-8
 FORCE_RATIO_MINIMUM_FORCE = 1e-12
 DEFAULT_FTOL = 1e-5
@@ -628,7 +629,6 @@ class FreeBoundaryRun(AbstractRun):
                 fb_aux = (
                     self.diagnostics_stage[f"stage_{self.nth_stage}"]
                     .force_balance.isel(updates=fb_update - 1)
-                    .squeeze()
                     .transpose("pol", "tor")
                 )
                 M_proposed, N_proposed = minimal_modes_force_balance(
@@ -895,10 +895,18 @@ def _get_B2_fp(
             "Could not import fbtools. Was free-boundary gvec (`gvec[free_boundary]`) installed?"
         ) from e
 
-    theta = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
-    theta += 0.5 * theta[1]
-    zeta = np.linspace(0, 2 * np.pi / state.nfp, nzeta, endpoint=False)
-    zeta += 0.5 * zeta[1]
+    # BIEST needs at least BIEST_MIN_NZETA toroidal points per field period (axisymmetric states have a
+    # single GVEC integration point). Evaluate on an odd multiple k of the GVEC points, so that the GVEC
+    # (cell-centered) points are a subset of the BIEST points, and sample the result back.
+    k_zeta = 1
+    while k_zeta * nzeta < BIEST_MIN_NZETA:
+        k_zeta += 2
+    nzeta_biest = k_zeta * nzeta
+    zeta_idx = k_zeta * np.arange(nzeta) + (k_zeta - 1) // 2
+
+    # cell-centered points; the spacing must not be read from the points themselves
+    theta = (np.arange(ntheta) + 0.5) * (2 * np.pi / ntheta)
+    zeta = (np.arange(nzeta_biest) + 0.5) * (2 * np.pi / state.nfp / nzeta_biest)
 
     # get the boundary for the full device (=all field periods)
     boundary = state.evaluate("pos", rho=1.0, zeta=zeta, theta=theta)
@@ -924,9 +932,15 @@ def _get_B2_fp(
         digits=digits,
     )
     time_1 = time.time()
-    logger.info(f"time for BIEST: {time_1 - time_0:.3}s for {ntheta * nzeta} points")
+    logger.info(
+        f"time for BIEST: {time_1 - time_0:.3}s for {ntheta * nzeta_biest} points"
+    )
     if state.clockwise_zeta:
         B_plas_ext = np.flip(B_plas_ext, axis=1)
+
+    # back to the GVEC integration points
+    B_plas_ext = B_plas_ext[:, zeta_idx, :]
+    B_coils = B_coils[:, zeta_idx, :]
 
     # Bext^2
     B_external = B_plas_ext + B_coils

@@ -94,12 +94,12 @@ def winding_nr(self):
     z_n = self.get_integration_points()[4]
     nzetas = z_n * self.nfp
     zeta = np.linspace(0, 2 * np.pi, nzetas, endpoint=False)
-    ev = self.evaluate("pos", "e_q3", rho=0.0, theta=0.0, zeta=zeta).squeeze()
+    ev = self.evaluate("pos", "e_q3", rho=0.0, theta=0.0, zeta=zeta).isel(rad=0, pol=0)
     pos = ev.pos
     e_q3 = ev.e_q3
     denom = pos.sel(xyz="x") ** 2 + pos.sel(xyz="y") ** 2
     numer = pos.sel(xyz="x") * e_q3.sel(xyz="y") - pos.sel(xyz="y") * e_q3.sel(xyz="x")
-    delta_zeta = zeta[1] - zeta[0]
+    delta_zeta = 2 * np.pi / nzetas  # not zeta[1] - zeta[0]: an axisymmetric state has a single point
     W = 1 / (2 * np.pi) * delta_zeta * (numer / denom).sum(dim="tor")
     return W.item()
 
