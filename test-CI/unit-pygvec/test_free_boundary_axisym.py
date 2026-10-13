@@ -209,3 +209,28 @@ def test_free_boundary_final_parameters_hold_final_boundary(tmp_path):
         R_in = sum(v * np.cos(m * theta) for (m, n), v in p["X1_b_cos"].items())
         assert abs(R_state - R_in) > 1e-6  # the boundary did move
         assert R_par == pytest.approx(R_state, abs=1e-12)
+
+
+def test_newton_boundary_force_excludes_spectral_condensation(tmp_path):
+    """The boundary force used by the Newton update is the pressure balance: it does not depend on the weight of the
+    spectral-condensation term, whose normal part would bias the converged shape."""
+    from gvec.core.minimize import MinimizationState
+
+    def forces(epsilon, rundir):
+        p = _params()
+        p["FreeBoundary"] = True
+        for q in ("X1", "X2", "LA"):
+            p[f"{q}_mn_max"] = [2, 0]
+        p["X1_b_cos"][(2, 0)] = 0.03  # m = 2 content: the condensation term is nonzero
+        p["X2_b_sin"][(2, 0)] = -0.02
+        p["free_boundary_epsilon_spectral"] = epsilon
+        rundir.mkdir()
+        st = MinimizationState.new(p, rundir=rundir)
+        t_n, z_n = st.t_n, st.z_n
+        st.set_Bext_squared(np.full(t_n * z_n, 0.3))
+        return st._eval_boundary_forces()
+
+    f0 = forces(0.0, tmp_path / "a")
+    f1 = forces(0.5, tmp_path / "b")
+    assert np.abs(f0).max() > 0
+    np.testing.assert_allclose(f1, f0, rtol=0, atol=1e-12)

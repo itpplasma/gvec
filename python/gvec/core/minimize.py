@@ -709,7 +709,8 @@ class MinimizationState(State):
 
     @with_binding
     def _eval_boundary_forces(self) -> np.ndarray:
-        """Recompute and return the (unpreconditioned) boundary forces for the current state and B_ext^2."""
+        """Recompute and return the (unpreconditioned) boundary forces for the current state and B_ext^2, without the
+        spectral-condensation term (the pressure balance only)."""
         f = np.asfortranarray(np.zeros(self._get_X1_n_modes() + self._get_X2_n_modes()))
         _state.eval_boundary_forces(f)
         return f

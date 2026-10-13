@@ -816,8 +816,9 @@ class FreeBoundaryRun(AbstractRun):
         functions phi_k of the X1 boundary basis; the boundary coefficients change by dx = P y, P[:, k] being the
         boundary-basis projection of phi_k times the unit normal of the boundary curve in the zeta = const plane
         (`newton_space = "normal"`, default). Equations: g(y) = P^T F_b = 0, the virtual work of the boundary force
-        F_b (pressure balance [[B^2/2 + mu_0 p]] in the weak form, plus the spectral-condensation term, which is
-        tangential and drops out) along the normal displacements. F_b is that of the interior equilibrium with the
+        F_b (pressure balance [[B^2/2 + mu_0 p]] in the weak form; the spectral-condensation term of the descent
+        force is left out, since its normal part is not zero and biases the shape by up to ~0.4 mm) along the
+        normal displacements. F_b is that of the interior equilibrium with the
         displaced boundary and B_ext = coils + BIEST evaluated on the displaced boundary. With
         `newton_space = "full"`, the unknowns are all boundary coefficients (P = I); this includes the nearly
         singular tangential re-parametrisations, whose stiffness is only the spectral-condensation weight.

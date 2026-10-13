@@ -380,21 +380,28 @@ END SUBROUTINE get_boundary_dofs
 
 !===================================================================================================================================
 !> Recompute the boundary forces (Force_b_X1, Force_b_X2) of the current state with the current Bext_squared and return them.
-!! The order and the content are those of get_boundary_forces (unpreconditioned).
+!! The order is that of get_boundary_forces (unpreconditioned). The spectral-condensation term of the exterior force is
+!! left out (epsilon_spectral = 0 for this evaluation): it is the gradient of a parametrisation-dependent penalty, whose
+!! normal part biases the shape of the boundary by an amount that depends on the (unconverged) tangential
+!! parametrisation, while the quantity solved for by a Newton iteration is the pressure balance.
 !===================================================================================================================================
 SUBROUTINE eval_boundary_forces(forces_inout)
   ! MODULES
-  USE MODgvec_MHD3D_Vars, ONLY: Force_b_X1, Force_b_X2, X1_base, X2_base
+  USE MODgvec_MHD3D_Vars, ONLY: Force_b_X1, Force_b_X2, X1_base, X2_base, epsilon_spectral
   USE MODgvec_MHD3D_evalFunc, ONLY: EvalForce
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
   REAL(wp), INTENT(INOUT) :: forces_inout(X1_base%f%modes + X2_base%f%modes)
   ! LOCAL VARIABLES -------------------------------------------------------------------------------------------------------------!
   INTEGER :: JacCheck
+  REAL(wp) :: epsilon_spectral_save
   ! CODE ------------------------------------------------------------------------------------------------------------------------!
   JacCheck = 2
+  epsilon_spectral_save = epsilon_spectral
+  epsilon_spectral = 0.0_wp
   ASSOCIATE(vars => functional%minimizer%vars)
     CALL EvalForce(vars%dofs(0), .TRUE., JacCheck, vars%force(0))
   END ASSOCIATE
+  epsilon_spectral = epsilon_spectral_save
   IF (JacCheck < 0) CALL abort(__STAMP__, 'eval_boundary_forces: detJ<=0 in the current state')
   forces_inout(:X1_base%f%modes) = Force_b_X1
   forces_inout(X1_base%f%modes+1:) = Force_b_X2
