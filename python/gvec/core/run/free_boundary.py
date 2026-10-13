@@ -768,9 +768,16 @@ class FreeBoundaryRun(AbstractRun):
         import subprocess
         import sys
 
+        # one thread per worker, each pinned to its own CPU of the CPUs available to this process (cgroup), not of
+        # this thread's affinity: with OMP_PROC_BIND the master thread is bound to one core, and the workers would
+        # inherit that mask (and bind to the same first core through OMP_PLACES)
         env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
+        env["OMP_PROC_BIND"] = "false"
+        env.pop("OMP_PLACES", None)
+        cpus = _allowed_cpus()
         procs = []
-        for task in tasks:
+        for i, task in enumerate(tasks):
+            cpu = {cpus[i % len(cpus)]}
             wdir = Path(task[-1])
             wdir.mkdir(parents=True, exist_ok=True)
             (wdir / "task.pkl").write_bytes(pickle.dumps(task))
@@ -778,7 +785,12 @@ class FreeBoundaryRun(AbstractRun):
             cmd = [sys.executable, "-c", "from gvec.core.run.free_boundary import _fd_worker_main; _fd_worker_main()",
                    str(wdir / "task.pkl")]
             with open(wdir / "worker.log", "w") as log:
-                procs.append(subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT))
+                procs.append(
+                    subprocess.Popen(
+                        cmd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                        preexec_fn=lambda cpu=cpu: os.sched_setaffinity(0, cpu),
+                    )
+                )
         codes = [p.wait() for p in procs]
         if any(codes):
             raise RuntimeError(f"Newton FD workers failed (exit codes {codes}); see newton_worker_*/worker.log")
@@ -833,6 +845,7 @@ class FreeBoundaryRun(AbstractRun):
         workers = int(fbp.get("newton_workers", 1))
         space = fbp.get("newton_space", "normal")
         noise_step = fbp.get("newton_noise_step", 1e-5)
+        rebuild_ratio = fbp.get("newton_rebuild_ratio", 0.5)
 
         self.newton_history = []
         # the finite differences need a converged base state
@@ -853,12 +866,14 @@ class FreeBoundaryRun(AbstractRun):
         g_init = np.linalg.norm(g)
         k = P.shape[1]
         J = None
+        self._newton_last_fd_jacobian = None
         # optional start Jacobian (a newton_jacobian_*.npz of a run with the same resolution and newton_space),
         # e.g. the RMP-off Jacobian for an RMP amplitude scan
         if (jac_file := fbp.get("newton_initial_jacobian")) is not None:
             J = np.load(jac_file)["J"]
             if J.shape != (k, k):
                 raise ValueError(f"newton_initial_jacobian has shape {J.shape}, expected {(k, k)}")
+            self._newton_last_fd_jacobian = J
             logger.info(f"Newton: initial Jacobian from {jac_file}")
         jac_fresh = False
         n_jac = 0
@@ -878,6 +893,7 @@ class FreeBoundaryRun(AbstractRun):
                     dR[:, j] = self._fb_residual(digits_BIEST)[0] - r
                 self.state._restore_dofs()
             Jfd = P.T @ dR / h
+            self._newton_last_fd_jacobian = Jfd
             n_jac += 1
             logger.info(f"Newton: FD Jacobian ({k} columns, {workers} workers) in {time.time() - t0:.1f}s")
             if save_jacobian:
@@ -938,8 +954,13 @@ class FreeBoundaryRun(AbstractRun):
                     logger.warning("Newton free boundary: no decrease of |g| along the step; stopping.")
                 fb_update -= 1
                 break
-            # Broyden update and new base point; the basis follows the boundary
+            # Broyden update and new base point; the basis follows the boundary. A Broyden Jacobian that
+            # reduces |g| by less than newton_rebuild_ratio per step is replaced by a new FD Jacobian.
+            slow = np.linalg.norm(g_new) > rebuild_ratio * np.linalg.norm(g)
             J = J + np.outer((g_new - g) - J @ sy, sy) / (sy @ sy)
+            if slow and not jac_fresh:
+                logger.info("Newton: slow decrease of |g| with a Broyden Jacobian; rebuilding the FD Jacobian.")
+                J = None
             jac_fresh = False
             r, fields = r_new, fields_new
             self.state._checkpoint_dofs()
@@ -973,6 +994,9 @@ class FreeBoundaryRun(AbstractRun):
             if self.free_boundary_target <= free_boundary_tolerance:
                 logger.info("Newton free boundary: free-boundary target below tolerance.")
                 break
+        # final (Broyden-updated) Jacobian, e.g. to be saved with np.savez(path, J=...) and passed as
+        # newton_initial_jacobian to a related run; the run directory is removed after the stage
+        self.newton_jacobian = J if J is not None else self._newton_last_fd_jacobian
         return fb_update
 
     def plot_diagnostics_minimization(self):
@@ -1168,6 +1192,35 @@ def _fd_worker(task):
                 raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
             out[j] = _boundary_residual(state, coil_set, digits)[0] - r0
     return out
+
+
+def _allowed_cpus():
+    """CPUs available to this process: the cgroup (v2) cpuset if readable, else the parent's or own affinity."""
+    import os
+
+    def parse(text):
+        cpus = []
+        for part in text.strip().split(","):
+            if "-" in part:
+                a, b = part.split("-")
+                cpus += list(range(int(a), int(b) + 1))
+            elif part:
+                cpus.append(int(part))
+        return cpus
+
+    try:
+        rel = Path("/proc/self/cgroup").read_text().splitlines()[0].split(":", 2)[2]
+        cpus = parse((Path("/sys/fs/cgroup" + rel) / "cpuset.cpus.effective").read_text())
+        if cpus:
+            return sorted(cpus)
+    except (OSError, IndexError, ValueError):
+        pass
+    for pid in (os.getppid(), 0):
+        try:
+            return sorted(os.sched_getaffinity(pid))
+        except OSError:
+            continue
+    return [0]
 
 
 def _fd_worker_main():
