@@ -193,3 +193,19 @@ def test_normal_displacement_basis_3d(tmp_path):
     err = np.hypot(field(P[:, k], "X1") - phi * nR, field(P[:, k], "X2") - phi * nZ).max()
     assert err < 0.05  # truncation of phi * n at m <= 4, |n| <= 2; a wrong zeta frequency gives O(1)
 
+
+def test_free_boundary_final_parameters_hold_final_boundary(tmp_path):
+    """The final parameter file of a free-boundary run describes the moved boundary, not the input one."""
+    pytest.importorskip("fbtools")
+    p = _params()
+    p["totalIter"] = 20000
+    p["minimize_tol"] = 1e-5
+    p["free_boundary"] = dict(updates=4, tolerance=1e-12, dt=1e-1, force_ratio_limit=0.0, gtol=0.0, ftol=0.0, xtol=0.0)
+    run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    st = run.state
+    for theta in (0.0, np.pi):
+        R_state = st.evaluate("X1", rho=[1.0], theta=[theta], zeta=[0.0]).X1.values.item()
+        R_par = sum(v * np.cos(m * theta) for (m, n), v in st.parameters["X1_b_cos"].items())
+        R_in = sum(v * np.cos(m * theta) for (m, n), v in p["X1_b_cos"].items())
+        assert abs(R_state - R_in) > 1e-6  # the boundary did move
+        assert R_par == pytest.approx(R_state, abs=1e-12)
