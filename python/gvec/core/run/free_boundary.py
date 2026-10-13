@@ -465,8 +465,11 @@ class FreeBoundaryRun(AbstractRun):
                         logger.info(f"Setting gvec minimize_tol: {minimize_tol:.2e}")
 
                     fb_target_reached = self.free_boundary_target <= free_boundary_tolerance
-                    ftol_reached = self.fdelta <= ftol
-                    xtol_reached = self.xnorm_mavg <= xtol
+                    # ftol is relative to the moving-average target, and ftol/xtol act only on a full
+                    # moving-average window (before that, fdelta and xnorm_mavg describe 1-2 updates)
+                    window_full = fb_update > MOVING_AVERAGE_WINDOW
+                    ftol_reached = window_full and self.fdelta <= ftol * abs(self.target_mavg)
+                    xtol_reached = window_full and self.xnorm_mavg <= xtol
                     gtol_reached = self.gnorm_mavg <= gtol
                     force_ratio_limit_reached = self._resolved_force_ratio <= force_ratio_limit
 

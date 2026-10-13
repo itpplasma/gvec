@@ -93,3 +93,15 @@ def test_free_boundary_run_axisymmetric(tmp_path):
     p["free_boundary"] = dict(updates=3, tolerance=1e-3, dt=1e-3)
     run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
     assert np.isfinite(run.state.evaluate("X1", rho=1.0, theta=0.0, zeta=0.0).X1.values).all()
+
+
+def test_free_boundary_descent_does_not_stop_before_full_window(tmp_path):
+    """ftol/xtol must not stop the descent loop from the first update's two-entry moving average."""
+    pytest.importorskip("fbtools")
+    p = _params()
+    p["totalIter"] = 20000
+    p["minimize_tol"] = 1e-5
+    p["free_boundary"] = dict(updates=6, tolerance=1e-12, dt=1e-3, force_ratio_limit=0.0, gtol=0.0)
+    run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    ds = run.diagnostics_stage[list(run.diagnostics_stage.children)[-1]].to_dataset()
+    assert np.isfinite(ds.free_boundary_target.values).sum() == 6
