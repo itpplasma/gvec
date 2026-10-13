@@ -679,6 +679,38 @@ class MinimizationState(State):
         return (m, n, forces_out)
 
     @with_binding
+    def _get_boundary_dofs(self) -> np.ndarray:
+        """Boundary coefficients (X1 modes, then X2 modes), in the order of `_get_boundary_forces`."""
+        x = np.asfortranarray(np.zeros(self._get_X1_n_modes() + self._get_X2_n_modes()))
+        _state.get_boundary_dofs(x)
+        return x
+
+    @with_binding
+    def _eval_boundary_forces(self) -> np.ndarray:
+        """Recompute and return the (unpreconditioned) boundary forces for the current state and B_ext^2."""
+        f = np.asfortranarray(np.zeros(self._get_X1_n_modes() + self._get_X2_n_modes()))
+        _state.eval_boundary_forces(f)
+        return f
+
+    @with_binding
+    def _apply_boundary_perturbation(self, pert: np.ndarray, blend_depth: float = 0.6) -> bool:
+        """Add `pert` to the boundary coefficients, blended into the interior.
+
+        Returns False (state unchanged) if the perturbed state has a non-positive Jacobian."""
+        pert = np.asfortranarray(pert, dtype=float)
+        return bool(_state.apply_boundary_perturbation(pert, blend_depth))
+
+    @with_binding
+    def _checkpoint_dofs(self):
+        """Keep an in-memory copy of the current solution for `_restore_dofs`."""
+        _state.checkpoint_dofs()
+
+    @with_binding
+    def _restore_dofs(self):
+        """Restore the solution saved by `_checkpoint_dofs`."""
+        _state.restore_dofs()
+
+    @with_binding
     def get_Fnorm_boundary(self):
         logger.debug("Extracting Fnorm at the boundary")
         return _state.get_fnorm_boundary()

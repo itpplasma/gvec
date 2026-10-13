@@ -8,6 +8,7 @@ MODULE MODgvec_py_state
 
 USE MODgvec_MHD3D,        ONLY: t_functional_mhd3d
 USE MODgvec_base,         ONLY: t_base
+USE MODgvec_sol_var_MHD3D, ONLY: t_sol_var_MHD3D
 USE MODgvec_Globals,      ONLY: enter_subregion,exit_subregion,reset_subregion,Unit_stdOut,MPIroot,nRanks,abort,wp
 
 IMPLICIT NONE
@@ -16,6 +17,7 @@ PUBLIC
 CLASS(t_functional_mhd3d), ALLOCATABLE :: functional
 LOGICAL :: initialized = .FALSE.
 INTEGER :: nfp = 0
+TYPE(t_sol_var_MHD3D), ALLOCATABLE, PRIVATE :: dofs_checkpoint !! in-memory copy of the solution (checkpoint_dofs)
 
 CONTAINS
 
@@ -360,6 +362,112 @@ SUBROUTINE get_boundary_forces(m_inout, n_inout, forces_inout)
 
   forces_inout(X1_base%f%modes+1:) = Force_b_X2
 END SUBROUTINE get_boundary_forces
+
+!===================================================================================================================================
+!> Boundary coefficients X1(s=1), X2(s=1) of the current state, concatenated in the order of get_boundary_forces.
+!===================================================================================================================================
+SUBROUTINE get_boundary_dofs(x_inout)
+  ! MODULES
+  USE MODgvec_MHD3D_Vars, ONLY: X1_base, X2_base
+  ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
+  REAL(wp), INTENT(INOUT) :: x_inout(X1_base%f%modes + X2_base%f%modes)
+  ! CODE ------------------------------------------------------------------------------------------------------------------------!
+  ASSOCIATE(vars => functional%minimizer%vars)
+    x_inout(:X1_base%f%modes) = vars%dofs(0)%X1(X1_base%s%nBase,:)
+    x_inout(X1_base%f%modes+1:) = vars%dofs(0)%X2(X2_base%s%nBase,:)
+  END ASSOCIATE
+END SUBROUTINE get_boundary_dofs
+
+!===================================================================================================================================
+!> Recompute the boundary forces (Force_b_X1, Force_b_X2) of the current state with the current Bext_squared and return them.
+!! The order and the content are those of get_boundary_forces (unpreconditioned).
+!===================================================================================================================================
+SUBROUTINE eval_boundary_forces(forces_inout)
+  ! MODULES
+  USE MODgvec_MHD3D_Vars, ONLY: Force_b_X1, Force_b_X2, X1_base, X2_base
+  USE MODgvec_MHD3D_evalFunc, ONLY: EvalForce
+  ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
+  REAL(wp), INTENT(INOUT) :: forces_inout(X1_base%f%modes + X2_base%f%modes)
+  ! LOCAL VARIABLES -------------------------------------------------------------------------------------------------------------!
+  INTEGER :: JacCheck
+  ! CODE ------------------------------------------------------------------------------------------------------------------------!
+  JacCheck = 2
+  ASSOCIATE(vars => functional%minimizer%vars)
+    CALL EvalForce(vars%dofs(0), .TRUE., JacCheck, vars%force(0))
+  END ASSOCIATE
+  IF (JacCheck < 0) CALL abort(__STAMP__, 'eval_boundary_forces: detJ<=0 in the current state')
+  forces_inout(:X1_base%f%modes) = Force_b_X1
+  forces_inout(X1_base%f%modes+1:) = Force_b_X2
+END SUBROUTINE eval_boundary_forces
+
+!===================================================================================================================================
+!> Add a prescribed boundary perturbation (X1 modes, then X2 modes) to the current state, blended into the interior with the
+!! cosine blending of the free-boundary update. Returns .FALSE. and leaves the state unchanged if the result has detJ<=0.
+!===================================================================================================================================
+FUNCTION apply_boundary_perturbation(pert, blend_depth) RESULT(ok)
+  ! MODULES
+  USE MODgvec_MHD3D,      ONLY: AddBoundaryPerturbation
+  USE MODgvec_MHD3D_Vars, ONLY: X1_b, X2_b, X1_base, X2_base, X1pert_b, X2pert_b
+  USE MODgvec_MHD3D_evalFunc, ONLY: EvalEnergy
+  ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
+  REAL(wp), INTENT(IN) :: pert(:)
+  REAL(wp), INTENT(IN) :: blend_depth
+  LOGICAL              :: ok
+  ! LOCAL VARIABLES -------------------------------------------------------------------------------------------------------------!
+  INTEGER :: JacCheck
+  ! CODE ------------------------------------------------------------------------------------------------------------------------!
+  IF (SIZE(pert) .NE. X1_base%f%modes + X2_base%f%modes) &
+    CALL abort(__STAMP__, 'apply_boundary_perturbation: pert has the wrong size')
+  ASSOCIATE(vars => functional%minimizer%vars)
+    X1_b = vars%dofs(0)%X1(X1_base%s%nBase,:)
+    X2_b = vars%dofs(0)%X2(X2_base%s%nBase,:)
+    X1pert_b = pert(:X1_base%f%modes)
+    X2pert_b = pert(X1_base%f%modes+1:)
+    CALL vars%temp_dofs(1)%set_to(vars%dofs(0))
+    CALL AddBoundaryPerturbation(vars%temp_dofs(1), blend_depth, 1)
+    JacCheck = 2
+    vars%temp_dofs(1)%W_MHD3D = EvalEnergy(vars%temp_dofs(1), .TRUE., JacCheck)
+    ok = (JacCheck >= 0)
+    IF (ok) THEN
+      CALL vars%dofs(0)%set_to(vars%temp_dofs(1))
+    ELSE
+      X1_b = vars%dofs(0)%X1(X1_base%s%nBase,:)
+      X2_b = vars%dofs(0)%X2(X2_base%s%nBase,:)
+    END IF
+    X1pert_b = 0.0_wp
+    X2pert_b = 0.0_wp
+  END ASSOCIATE
+END FUNCTION apply_boundary_perturbation
+
+!===================================================================================================================================
+!> Store a copy of the current solution (all dofs) in memory, for restore_dofs.
+!===================================================================================================================================
+SUBROUTINE checkpoint_dofs()
+  ! CODE ------------------------------------------------------------------------------------------------------------------------!
+  ASSOCIATE(vars => functional%minimizer%vars)
+    IF (.NOT. ALLOCATED(dofs_checkpoint)) THEN
+      ALLOCATE(dofs_checkpoint)
+      CALL dofs_checkpoint%copy(vars%dofs(0))
+    ELSE
+      CALL dofs_checkpoint%set_to(vars%dofs(0))
+    END IF
+  END ASSOCIATE
+END SUBROUTINE checkpoint_dofs
+
+!===================================================================================================================================
+!> Restore the solution stored by checkpoint_dofs, including the boundary values used for the strong boundary conditions.
+!===================================================================================================================================
+SUBROUTINE restore_dofs()
+  ! MODULES
+  USE MODgvec_MHD3D_Vars, ONLY: X1_b, X2_b, X1_base, X2_base
+  ! CODE ------------------------------------------------------------------------------------------------------------------------!
+  IF (.NOT. ALLOCATED(dofs_checkpoint)) CALL abort(__STAMP__, 'restore_dofs: no checkpoint stored')
+  ASSOCIATE(vars => functional%minimizer%vars)
+    CALL vars%dofs(0)%set_to(dofs_checkpoint)
+    X1_b = vars%dofs(0)%X1(X1_base%s%nBase,:)
+    X2_b = vars%dofs(0)%X2(X2_base%s%nBase,:)
+  END ASSOCIATE
+END SUBROUTINE restore_dofs
 
 SUBROUTINE save_statefile()
   ! MODULES

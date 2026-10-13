@@ -95,6 +95,57 @@ def test_free_boundary_run_axisymmetric(tmp_path):
     assert np.isfinite(run.state.evaluate("X1", rho=1.0, theta=0.0, zeta=0.0).X1.values).all()
 
 
+def _minimization_state(tmp_path, mn_max=1):
+    from gvec.core.minimize import MinimizationState
+
+    p = _params()
+    p["FreeBoundary"] = True
+    for q in ("X1", "X2", "LA"):
+        p[f"{q}_mn_max"] = [mn_max, 0]
+    return MinimizationState.new(p, rundir=tmp_path)
+
+
+def test_boundary_perturbation_and_checkpoint(tmp_path):
+    """A prescribed boundary perturbation moves the boundary by exactly that amount; restore undoes it."""
+    from gvec.core.run.free_boundary import _boundary_mode_list
+
+    state = _minimization_state(tmp_path)
+    modes = _boundary_mode_list(state)
+    i_R0 = modes.index(("X1", "c", 0, 0))
+    x0 = state._get_boundary_dofs()
+    R0_edge = state.evaluate("X1", rho=1.0, theta=[0.3, 2.0], zeta=0.0).X1.values.ravel()
+    state._checkpoint_dofs()
+    pert = np.zeros_like(x0)
+    pert[i_R0] = 0.01
+    assert state._apply_boundary_perturbation(pert, 0.6)
+    np.testing.assert_allclose(state._get_boundary_dofs() - x0, pert, atol=1e-14)
+    R1_edge = state.evaluate("X1", rho=1.0, theta=[0.3, 2.0], zeta=0.0).X1.values.ravel()
+    np.testing.assert_allclose(R1_edge - R0_edge, 0.01, atol=1e-12)
+    state._restore_dofs()
+    np.testing.assert_array_equal(state._get_boundary_dofs(), x0)
+
+
+def test_normal_displacement_basis_circle(tmp_path):
+    """For a circle R = R0 + a cos(t), Z = a sin(t) the unit normal is (cos t, sin t): a normal displacement 1
+    changes a by 1, a normal displacement cos(t) gives dR = cos^2 t = 1/2 + cos(2t)/2, dZ = sin(2t)/2."""
+    from gvec.core.run.free_boundary import _boundary_mode_list, _normal_displacement_basis
+
+    state = _minimization_state(tmp_path, mn_max=2)
+    modes = _boundary_mode_list(state)
+    P, _ = _normal_displacement_basis(state)
+    cols = [md for md in modes if md[0] == "X1"]
+    expect = {
+        ("c", 0): {("X1", "c", 1, 0): 1.0, ("X2", "s", 1, 0): 1.0},
+        ("c", 1): {("X1", "c", 0, 0): 0.5, ("X1", "c", 2, 0): 0.5, ("X2", "s", 2, 0): 0.5},
+    }
+    for (sc, m), dx in expect.items():
+        col = P[:, cols.index(("X1", sc, m, 0))]
+        want = np.zeros(len(modes))
+        for md, v in dx.items():
+            want[modes.index(md)] = v
+        np.testing.assert_allclose(col, want, atol=1e-12)
+
+
 def test_free_boundary_descent_does_not_stop_before_full_window(tmp_path):
     """ftol/xtol must not stop the descent loop from the first update's two-entry moving average."""
     pytest.importorskip("fbtools")
