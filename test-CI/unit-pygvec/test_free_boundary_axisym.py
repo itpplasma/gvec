@@ -156,3 +156,40 @@ def test_free_boundary_descent_does_not_stop_before_full_window(tmp_path):
     run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
     ds = run.diagnostics_stage[list(run.diagnostics_stage.children)[-1]].to_dataset()
     assert np.isfinite(ds.free_boundary_target.values).sum() == 6
+
+
+def test_normal_displacement_basis_3d(tmp_path):
+    """nfp=3 torus with a helical boundary: each column of P, evaluated as a boundary displacement, equals
+    phi_k(theta, zeta) times the in-plane unit normal (up to the truncation of the boundary basis)."""
+    from gvec.core.minimize import MinimizationState
+    from gvec.core.run.free_boundary import _boundary_mode_list, _normal_displacement_basis
+
+    p = _params()
+    p.update(nfp=3, FreeBoundary=True)
+    p["X1_b_cos"] = {(0, 0): R0, (1, 0): A0, (1, 1): 0.02}
+    p["X2_b_sin"] = {(1, 0): A0, (1, 1): 0.02}
+    for q in ("X1", "X2", "LA"):
+        p[f"{q}_mn_max"] = [4, 2]
+    state = MinimizationState.new(p, rundir=tmp_path)
+    modes = _boundary_mode_list(state)
+    assert max(md[3] for md in modes) == 2
+    P, _ = _normal_displacement_basis(state, oversample=8)
+    th = np.linspace(0, 2 * np.pi, 37)[:-1] + 0.1
+    ze = np.linspace(0, 2 * np.pi / 3, 13)[:-1] + 0.05
+    TH, ZE = np.meshgrid(th, ze, indexing="ij")
+    ev = state.evaluate("dX1_dt", "dX2_dt", rho=[1.0], theta=th, zeta=ze).isel(rad=0)
+    Rt, Zt = ev.dX1_dt.transpose("pol", "tor").values, ev.dX2_dt.transpose("pol", "tor").values
+    nR, nZ = Zt / np.hypot(Rt, Zt), -Rt / np.hypot(Rt, Zt)
+
+    def field(coefs, var):
+        f = np.zeros_like(TH)
+        for (v, sc, m, n), c in zip(modes, coefs):
+            if v == var:
+                f += c * (np.sin if sc == "s" else np.cos)(m * TH - n * 3 * ZE)
+        return f
+
+    k = [md for md in modes if md[0] == "X1"].index(("X1", "c", 1, 1))
+    phi = np.cos(TH - 3 * ZE)
+    err = np.hypot(field(P[:, k], "X1") - phi * nR, field(P[:, k], "X2") - phi * nZ).max()
+    assert err < 0.05  # truncation of phi * n at m <= 4, |n| <= 2; a wrong zeta frequency gives O(1)
+

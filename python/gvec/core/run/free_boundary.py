@@ -1234,8 +1234,10 @@ def _fd_worker_main():
 
 
 def _boundary_mode_list(state: MinimizationState):
-    """[(var, sc, m, n)] for the boundary dofs in the order of _get_boundary_forces (sine block first)."""
+    """[(var, sc, m, n)] for the boundary dofs in the order of _get_boundary_forces (sine block first);
+    n is the toroidal mode number per field period (the basis function is sin/cos(m theta - n nfp zeta))."""
     m, n, _ = state._get_boundary_forces()
+    n = n // state.nfp  # the Fortran mode table holds n * nfp
     n1 = state._get_X1_n_modes()
     out = []
     for var, sl in (("X1", slice(0, n1)), ("X2", slice(n1, m.size))):
