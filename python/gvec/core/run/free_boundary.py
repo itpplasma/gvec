@@ -833,12 +833,19 @@ class FreeBoundaryRun(AbstractRun):
 
         Stops when the largest normal-mode amplitude of the step is below `newton_xtol` [m], when a step smaller
         than `newton_noise_step` [m] does not decrease |g| (noise floor), when |g| fell below `newton_rtol` times its
-        initial value, when the free-boundary target is below the tolerance, or when the update budget is used up.
+        initial value or below `newton_gtol`, when the free-boundary target is below the tolerance, or when the
+        update budget is used up. A small step or a failed line search is a step-size criterion only: a step in the
+        stiff modes can be micrometres while |g| is still far above what the problem reaches. With `newton_gtol` > 0
+        (absolute, in the units of |g|), a small step therefore does not stop the update while |g| > `newton_gtol`
+        unless it was computed from a freshly built finite-difference Jacobian and did not reduce |g| by more than a
+        factor `newton_rebuild_ratio` (then the run stops with a warning that it stalled above `newton_gtol`). A
+        rejected step always rebuilds a Broyden Jacobian before the noise-floor stop is considered.
         Returns the last update index."""
         fbp = self._state_parameters["free_boundary"]
         h = fbp.get("newton_fd_step", 1e-4)
         xtol = fbp.get("newton_xtol", 1e-6)
         rtol = fbp.get("newton_rtol", 1e-8)
+        gtol = fbp.get("newton_gtol", 0.0)
         max_step = fbp.get("newton_max_step", 0.05)
         lm = fbp.get("newton_lm", 1e-12)
         max_backtracks = fbp.get("newton_max_backtracks", 6)
@@ -935,10 +942,10 @@ class FreeBoundaryRun(AbstractRun):
                     alpha *= 0.5
                 if accepted:
                     break
-                if np.max(np.abs(dy) * ynorm) < noise_step:
+                if np.max(np.abs(dy) * ynorm) < noise_step and jac_fresh:
                     logger.info(
-                        "Newton step below newton_noise_step rejected: |g| is at its noise floor (inner "
-                        "tolerance, BIEST accuracy); stopping."
+                        "Newton step below newton_noise_step rejected with a fresh FD Jacobian: |g| is at its noise "
+                        "floor (inner tolerance, BIEST accuracy); stopping."
                     )
                     break
                 if not jac_fresh:
@@ -953,11 +960,16 @@ class FreeBoundaryRun(AbstractRun):
                 self.state._restore_dofs()
                 if np.max(np.abs(dy) * ynorm) >= noise_step:
                     logger.warning("Newton free boundary: no decrease of |g| along the step; stopping.")
+                elif gtol > 0.0 and np.linalg.norm(g) > gtol:
+                    logger.warning(
+                        f"Newton free boundary: stalled above newton_gtol, |g| {np.linalg.norm(g):.3e} > {gtol:.3e}."
+                    )
                 fb_update -= 1
                 break
             # Broyden update and new base point; the basis follows the boundary. A Broyden Jacobian that
             # reduces |g| by less than newton_rebuild_ratio per step is replaced by a new FD Jacobian.
             slow = np.linalg.norm(g_new) > rebuild_ratio * np.linalg.norm(g)
+            step_fresh = jac_fresh
             J = J + np.outer((g_new - g) - J @ sy, sy) / (sy @ sy)
             if slow and not jac_fresh:
                 logger.info("Newton: slow decrease of |g| with a Broyden Jacobian; rebuilding the FD Jacobian.")
@@ -986,12 +998,25 @@ class FreeBoundaryRun(AbstractRun):
                 f"Newton: |g| {self.gnorm:.3e} (rel {self.gnorm / g_init:.2e}), max normal-mode step {self.xnorm:.2e} m, "
                 f"alpha {alpha:.3f}, target {self.free_boundary_target:.3e}, FD Jacobians {n_jac}"
             )
-            if self.xnorm < xtol:
-                logger.info("Newton free boundary: boundary step below newton_xtol.")
-                break
             if self.gnorm < rtol * g_init:
                 logger.info("Newton free boundary: |g| below newton_rtol.")
                 break
+            if gtol > 0.0 and self.gnorm < gtol:
+                logger.info("Newton free boundary: |g| below newton_gtol.")
+                break
+            if self.xnorm < xtol:
+                if gtol <= 0.0 or self.gnorm < gtol:
+                    logger.info("Newton free boundary: boundary step below newton_xtol.")
+                    break
+                if step_fresh and slow:
+                    logger.warning(
+                        f"Newton free boundary: step below newton_xtol from a fresh FD Jacobian without a decrease "
+                        f"of |g| ({self.gnorm:.3e} > newton_gtol {gtol:.3e}): stalled; stopping."
+                    )
+                    break
+                if not step_fresh:
+                    logger.info("Newton: step below newton_xtol but |g| above newton_gtol; rebuilding the FD Jacobian.")
+                    J = None
             if self.free_boundary_target <= free_boundary_tolerance:
                 logger.info("Newton free boundary: free-boundary target below tolerance.")
                 break

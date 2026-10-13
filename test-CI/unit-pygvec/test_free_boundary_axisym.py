@@ -234,3 +234,69 @@ def test_newton_boundary_force_excludes_spectral_condensation(tmp_path):
     f1 = forces(0.5, tmp_path / "b")
     assert np.abs(f0).max() > 0
     np.testing.assert_allclose(f1, f0, rtol=0, atol=1e-12)
+
+
+class _ToyBoundaryState:
+    """Stand-in for the interior equilibrium of a Newton free-boundary run: the unknowns are the boundary
+    coefficients y themselves, kept here, with checkpoint/restore."""
+
+    def __init__(self, y):
+        self.y = y
+        self._saved = y.copy()
+
+    def reset_descent(self):
+        pass
+
+    def solve(self, **kwargs):
+        pass
+
+    def _checkpoint_dofs(self):
+        self._saved = self.y.copy()
+
+    def _restore_dofs(self):
+        self.y = self._saved.copy()
+
+    def get_iterations(self):
+        return 0
+
+
+def _toy_newton(monkeypatch, y_start, y_ref, stiffness, curvature, **fbp):
+    """Run FreeBoundaryRun._run_newton on the residual g(y) = stiffness * e + curvature * e**2, e = y - y_ref, whose
+    zero is the reference state. The quadratic term makes the finite-difference Jacobian (step 1e-4) of the
+    soft mode stiff by 40 %, so the steps shrink geometrically while |g| is still far above zero."""
+    from gvec.core.run import free_boundary as fb
+
+    k = len(y_ref)
+    run = fb.FreeBoundaryRun.__new__(fb.FreeBoundaryRun)
+    run.state = _ToyBoundaryState(np.array(y_start, dtype=float))
+    run._state_parameters = {"free_boundary": dict(newton_workers=1, newton_max_step=0.05, newton_fd_step=1e-4, **fbp)}
+    run.free_boundary_target = 1.0
+    run._update_diagnostics = lambda *args: None
+    monkeypatch.setattr(fb, "_normal_displacement_basis", lambda state: (np.eye(k), np.ones(k)))
+
+    def residual(digits):
+        e = run.state.y - y_ref
+        return stiffness * e + curvature * e**2, ()
+
+    def move(pert, blend_depth, minimize_tol, maxIter):
+        run.state.y = run.state._saved + pert  # relative to the checkpointed base state
+        return True
+
+    run._fb_residual = residual
+    run._fb_move_and_solve = move
+    run._run_newton(100, 0.0, 1e-8, 1000, 8, -1.0)
+    return run
+
+
+def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
+    """A small step is not convergence: with newton_gtol the update continues, with a rebuilt Jacobian, until |g|
+    is below the level the problem reaches, and an offset start returns to the reference state."""
+    y_ref = np.array([0.30, -0.10, 0.02])
+    stiffness = np.array([2e4, 1e4, 50.0])
+    y_start = y_ref + np.array([0.0, 0.0, 2e-3])
+    kw = dict(newton_xtol=1e-4, newton_rtol=0.0)
+    legacy = _toy_newton(monkeypatch, y_start, y_ref, stiffness, 2e5, **kw)
+    fixed = _toy_newton(monkeypatch, y_start, y_ref, stiffness, 2e5, newton_gtol=1e-7, **kw)
+    assert np.linalg.norm(legacy.state.y - y_ref) > 1e-7  # stops on the step size, far from the reference
+    assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
+    assert fixed.gnorm < 1e-7
