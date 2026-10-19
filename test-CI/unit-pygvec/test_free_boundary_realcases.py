@@ -220,15 +220,6 @@ def current_fit_state(tmp_path):
     return state
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "Verified: python/gvec/core/minimize.py:354 multiplies an extrapolated singular "
-        "iota_curr_bar by I_tor(0)=0; :361 clamps the fitted axis to zero. The finite "
-        "I_tor/rho**2 limit is lost (extrapolation at :843)."
-    ),
-)
 def test_free_boundary_current_fit_axis_limit(current_fit_state):
     # Verified analytic oracle for concentric circular sections and I_tor = I_edge*rho**2:
     # iota_axis = mu_0*I_edge*R_axis/(2*PhiEdge), from poloidal Ampere and toroidal flux.

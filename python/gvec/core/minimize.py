@@ -352,6 +352,21 @@ class MinimizationState(State):
             rho = _linspace_sgrid(sgrid, IOTA_SAMPLING_FACTOR * self.knots_per_sgrid_element)
             ev = self._evaluate_extrapolate_in_rho2(*Qs, rho=rho, theta="int", zeta="int")[Qs]
             iota_target = ev.iota_geom + self.I_tor(rho**2) * ev.iota_curr_bar
+            # Gamma_t = O(rho) and dPhi_dr = O(rho), so iota_curr_bar = C/rho**2.
+            # For a regular current I(s) = I'(0)*s + O(s**2), s = rho**2,
+            # lim I(s)*iota_curr_bar = I'(0)*C (circular axis: C = mu0*R/(2*PhiEdge)).
+            # Extrapolate the finite product, never the singular factor times I(0).
+            rho_axis = np.sqrt([1e-8, 2e-8, 3e-8])
+            axis = self.evaluate(
+                "iota_geom",
+                "iota_curr_bar",
+                rho=rho_axis,
+                theta="int",
+                zeta="int",
+                extrapolate=False,
+            )
+            target_axis = axis.iota_geom + self.I_tor(rho_axis**2) * axis.iota_curr_bar
+            iota_target[0] = (3 * (target_axis[0] - target_axis[1]) + target_axis[2]).item()
 
             # least-squares fit
             bspline = scipy.interpolate.make_lsq_spline(
