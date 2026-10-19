@@ -82,7 +82,8 @@ def test_find_state_parameter_final(testfiles, tmp_path, caplog):
     shutil.copy(testfiles[0], tmp_path / "parameter.ini")
     shutil.copy(testfiles[0], tmp_path / "parameter_final.ini")
     shutil.copy(testfiles[1], tmp_path / "Test_State-0.dat")
-    with caplog.at_level("INFO"):
+    # gvec.run() sets the level of the "gvec" logger to WARNING for the rest of the session
+    with caplog.at_level("INFO", logger="gvec"):
         state = find_state(tmp_path)
         assert (
             "found more than one candidate parameterfile, with one '*final*' file"
