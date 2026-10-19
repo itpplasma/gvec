@@ -1,5 +1,23 @@
 # GVEC - 3D MHD Equilibrium Solver
 
+## Experimental ITP fork
+
+This is an experimental fork of GVEC, maintained by the Institute of Theoretical and Computational Physics (ITP), TU Graz.
+It carries the following extra features and fixes until they are available
+[upstream](https://gitlab.mpcdf.mpg.de/gvec-group/gvec) ([GitHub mirror](https://github.com/gvec-group/gvec)):
+
+* Free-boundary equilibria from the upstream `free_boundary_three_step` development branch, with prescribed current profile in BIEST.
+* Free-boundary fixes: axisymmetric states (`nzeta=1`), relative `ftol`, residual without the spectral-condensation term, `n` per field period, parameter files saved with the current boundary, BiotSavart prefactor documentation.
+* Newton/Broyden normal-displacement boundary update for free boundary (`free_boundary.method = "newton"`, `newton_gtol`).
+* Hamada coordinates (`sfl="hamada"`, Hamada quantities, flux-surface plots).
+* Sign correction of the lambda variation.
+* Long restart file paths.
+* VMEC boundary arrays with sparse (ragged) mode content.
+* Fix of the restart-boundary key in `compute_boundary_perturbation`.
+* Fork CI: `CI_COMMIT_REF_SLUG` paths, private-runner jobs off by default.
+
+Issues for these features should be reported on [itpplasma/gvec](https://github.com/itpplasma/gvec).
+
 [![readthedocs](https://img.shields.io/badge/Read%20the%20Docs-8CA1AF?logo=readthedocs&labelColor=gray)](https://gvec.readthedocs.io)
 [![gitlab](https://img.shields.io/badge/GitLab-FC6D26?logo=gitlab&labelColor=gray)](https://gitlab.mpcdf.mpg.de/gvec-group/gvec)
 [![github-mirror](https://img.shields.io/badge/GitHub%20mirror-gray?logo=github&labelColor=gray)](https://github.com/gvec-group/gvec)
