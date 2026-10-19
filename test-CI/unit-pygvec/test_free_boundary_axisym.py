@@ -71,7 +71,9 @@ def test_B2_exterior_axisymmetric(state):
 
     nt, nz = state.get_integration_points()[2], state.get_integration_points()[4]
     # a far-away loop without current: the coil field vanishes, the exterior field is the plasma part only
-    loop = Coil(np.array([[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0], [1, 0, 0]]).T * 20.0, 0.0)
+    loop = Coil(
+        np.array([[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0], [1, 0, 0]]).T * 20.0, 0.0
+    )
     i_tor = 2e6
     _, B_plas, B_coils, B2 = _get_B2_fp(state, CoilSet([loop]), nt, nz, i_tor, True, 8)
     assert B_plas.shape == (3, nz, nt) and B2.shape == (nz, nt)
@@ -152,7 +154,9 @@ def test_free_boundary_descent_does_not_stop_before_full_window(tmp_path):
     p = _params()
     p["totalIter"] = 20000
     p["minimize_tol"] = 1e-5
-    p["free_boundary"] = dict(updates=6, tolerance=1e-12, dt=1e-3, force_ratio_limit=0.0, gtol=0.0)
+    p["free_boundary"] = dict(
+        updates=6, tolerance=1e-12, dt=1e-3, force_ratio_limit=0.0, gtol=0.0
+    )
     run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
     ds = run.diagnostics_stage[list(run.diagnostics_stage.children)[-1]].to_dataset()
     assert np.isfinite(ds.free_boundary_target.values).sum() == 6
@@ -191,7 +195,9 @@ def test_normal_displacement_basis_3d(tmp_path):
     k = [md for md in modes if md[0] == "X1"].index(("X1", "c", 1, 1))
     phi = np.cos(TH - 3 * ZE)
     err = np.hypot(field(P[:, k], "X1") - phi * nR, field(P[:, k], "X2") - phi * nZ).max()
-    assert err < 0.05  # truncation of phi * n at m <= 4, |n| <= 2; a wrong zeta frequency gives O(1)
+    assert (
+        err < 0.05
+    )  # truncation of phi * n at m <= 4, |n| <= 2; a wrong zeta frequency gives O(1)
 
 
 def test_free_boundary_final_parameters_hold_final_boundary(tmp_path):
@@ -200,7 +206,9 @@ def test_free_boundary_final_parameters_hold_final_boundary(tmp_path):
     p = _params()
     p["totalIter"] = 20000
     p["minimize_tol"] = 1e-5
-    p["free_boundary"] = dict(updates=4, tolerance=1e-12, dt=1e-1, force_ratio_limit=0.0, gtol=0.0, ftol=0.0, xtol=0.0)
+    p["free_boundary"] = dict(
+        updates=4, tolerance=1e-12, dt=1e-1, force_ratio_limit=0.0, gtol=0.0, ftol=0.0, xtol=0.0
+    )
     run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
     st = run.state
     for theta in (0.0, np.pi):
@@ -269,7 +277,11 @@ def _toy_newton(monkeypatch, y_start, y_ref, stiffness, curvature, **fbp):
     k = len(y_ref)
     run = fb.FreeBoundaryRun.__new__(fb.FreeBoundaryRun)
     run.state = _ToyBoundaryState(np.array(y_start, dtype=float))
-    run._state_parameters = {"free_boundary": dict(newton_workers=1, newton_max_step=0.05, newton_fd_step=1e-4, **fbp)}
+    run._state_parameters = {
+        "free_boundary": dict(
+            newton_workers=1, newton_max_step=0.05, newton_fd_step=1e-4, **fbp
+        )
+    }
     run.free_boundary_target = 1.0
     run._update_diagnostics = lambda *args: None
     monkeypatch.setattr(fb, "_normal_displacement_basis", lambda state: (np.eye(k), np.ones(k)))
@@ -297,6 +309,8 @@ def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     kw = dict(newton_xtol=1e-4, newton_rtol=0.0)
     legacy = _toy_newton(monkeypatch, y_start, y_ref, stiffness, 2e5, **kw)
     fixed = _toy_newton(monkeypatch, y_start, y_ref, stiffness, 2e5, newton_gtol=1e-7, **kw)
-    assert np.linalg.norm(legacy.state.y - y_ref) > 1e-7  # stops on the step size, far from the reference
+    assert (
+        np.linalg.norm(legacy.state.y - y_ref) > 1e-7
+    )  # stops on the step size, far from the reference
     assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
     assert fixed.gnorm < 1e-7

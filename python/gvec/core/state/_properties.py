@@ -99,7 +99,9 @@ def winding_nr(self):
     e_q3 = ev.e_q3
     denom = pos.sel(xyz="x") ** 2 + pos.sel(xyz="y") ** 2
     numer = pos.sel(xyz="x") * e_q3.sel(xyz="y") - pos.sel(xyz="y") * e_q3.sel(xyz="x")
-    delta_zeta = 2 * np.pi / nzetas  # not zeta[1] - zeta[0]: an axisymmetric state has a single point
+    delta_zeta = (
+        2 * np.pi / nzetas
+    )  # not zeta[1] - zeta[0]: an axisymmetric state has a single point
     W = 1 / (2 * np.pi) * delta_zeta * (numer / denom).sum(dim="tor")
     return W.item()
 

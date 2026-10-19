@@ -986,7 +986,9 @@ def get_phi_edge_from_coils(state: State, coil_set: CoilSet | Coil):
 
     # dl(i) = sqrt(g_ii) * du^i
     Adl = xr.dot(ev_coils.A, l_norm, dim="xyz") * np.sqrt(ev.g_tt)
-    delta_zeta = 2 * np.pi / (nz * state.nfp)  # not zeta[1] - zeta[0]: axisymmetric states have nz = 1
+    delta_zeta = (
+        2 * np.pi / (nz * state.nfp)
+    )  # not zeta[1] - zeta[0]: axisymmetric states have nz = 1
 
     # average toroidaly, integrate poloidaly
     Psi = delta_zeta * (Adl * Adl.pol_weight).sum(dim=("pol", "tor")) / (2 * np.pi)

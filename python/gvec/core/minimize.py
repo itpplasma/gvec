@@ -696,7 +696,9 @@ class MinimizationState(State):
                 (int(mm[i]), int(nn[i])): float(xx[i]) for i in range(cos_start) if xx[i] != 0.0
             }
             out[f"{var}_b_cos"] = {
-                (int(mm[i]), int(nn[i])): float(xx[i]) for i in range(cos_start, mm.size) if xx[i] != 0.0
+                (int(mm[i]), int(nn[i])): float(xx[i])
+                for i in range(cos_start, mm.size)
+                if xx[i] != 0.0
             }
         return out
 

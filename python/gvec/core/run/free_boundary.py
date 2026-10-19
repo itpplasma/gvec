@@ -735,13 +735,17 @@ class FreeBoundaryRun(AbstractRun):
     def _fb_residual(self, digits_BIEST: int):
         """Boundary force of the current (interior-converged) state with B_ext from the coils and BIEST
         evaluated on the current boundary. Returns (residual, (B_ext_2, B_coils, B_plas_ext))."""
-        r, fields, self.I_tor_boundary = _boundary_residual(self.state, self.coil_set, digits_BIEST)
+        r, fields, self.I_tor_boundary = _boundary_residual(
+            self.state, self.coil_set, digits_BIEST
+        )
         return r, fields
 
     def _fb_move_and_solve(self, pert, blend_depth, minimize_tol, maxIter):
         return _move_and_solve(self.state, pert, blend_depth, minimize_tol, maxIter)
 
-    def _fd_jacobian_parallel(self, perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers):
+    def _fd_jacobian_parallel(
+        self, perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers
+    ):
         """Forward differences of the boundary force along the columns of `perts` (n_dofs x k), computed in
         `workers` separate processes (one GVEC instance each, one OpenMP thread each). Each worker restarts from a
         statefile of the current (checkpointed) state and differences against its own base residual.
@@ -777,7 +781,9 @@ class FreeBoundaryRun(AbstractRun):
         # one thread per worker, each pinned to its own CPU of the CPUs available to this process (cgroup), not of
         # this thread's affinity: with OMP_PROC_BIND the master thread is bound to one core, and the workers would
         # inherit that mask (and bind to the same first core through OMP_PLACES)
-        env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
+        env = dict(
+            os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1"
+        )
         env["OMP_PROC_BIND"] = "false"
         env.pop("OMP_PLACES", None)
         cpus = _allowed_cpus()
@@ -788,18 +794,27 @@ class FreeBoundaryRun(AbstractRun):
             wdir.mkdir(parents=True, exist_ok=True)
             (wdir / "task.pkl").write_bytes(pickle.dumps(task))
             (wdir / "result.pkl").unlink(missing_ok=True)
-            cmd = [sys.executable, "-c", "from gvec.core.run.free_boundary import _fd_worker_main; _fd_worker_main()",
-                   str(wdir / "task.pkl")]
+            cmd = [
+                sys.executable,
+                "-c",
+                "from gvec.core.run.free_boundary import _fd_worker_main; _fd_worker_main()",
+                str(wdir / "task.pkl"),
+            ]
             with open(wdir / "worker.log", "w") as log:
                 procs.append(
                     subprocess.Popen(
-                        cmd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                        cmd,
+                        env=env,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
                         preexec_fn=lambda cpu=cpu: os.sched_setaffinity(0, cpu),
                     )
                 )
         codes = [p.wait() for p in procs]
         if any(codes):
-            raise RuntimeError(f"Newton FD workers failed (exit codes {codes}); see newton_worker_*/worker.log")
+            raise RuntimeError(
+                f"Newton FD workers failed (exit codes {codes}); see newton_worker_*/worker.log"
+            )
         results = [pickle.loads((Path(t[-1]) / "result.pkl").read_bytes()) for t in tasks]
         dR = np.zeros((perts.shape[0], k))
         for res in results:
@@ -886,7 +901,9 @@ class FreeBoundaryRun(AbstractRun):
         if (jac_file := fbp.get("newton_initial_jacobian")) is not None:
             J = np.load(jac_file)["J"]
             if J.shape != (k, k):
-                raise ValueError(f"newton_initial_jacobian has shape {J.shape}, expected {(k, k)}")
+                raise ValueError(
+                    f"newton_initial_jacobian has shape {J.shape}, expected {(k, k)}"
+                )
             self._newton_last_fd_jacobian = J
             logger.info(f"Newton: initial Jacobian from {jac_file}")
         jac_fresh = False
@@ -898,23 +915,36 @@ class FreeBoundaryRun(AbstractRun):
             t0 = time.time()
             perts = h * P
             if workers > 1:
-                dR = self._fd_jacobian_parallel(perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers)
+                dR = self._fd_jacobian_parallel(
+                    perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers
+                )
             else:
                 dR = np.zeros((r.size, k))
                 for j in range(k):
-                    if not self._fb_move_and_solve(perts[:, j], blend_depth, minimize_tol, maxIter):
+                    if not self._fb_move_and_solve(
+                        perts[:, j], blend_depth, minimize_tol, maxIter
+                    ):
                         raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
                     dR[:, j] = self._fb_residual(digits_BIEST)[0] - r
                 self.state._restore_dofs()
             Jfd = P.T @ dR / h
             self._newton_last_fd_jacobian = Jfd
             n_jac += 1
-            logger.info(f"Newton: FD Jacobian ({k} columns, {workers} workers) in {time.time() - t0:.1f}s")
+            logger.info(
+                f"Newton: FD Jacobian ({k} columns, {workers} workers) in {time.time() - t0:.1f}s"
+            )
             if save_jacobian:
                 m, nn, _ = self.state._get_boundary_forces()
                 np.savez(
                     f"newton_jacobian_{n_jac:03d}.npz",
-                    J=Jfd, g=g, r=r, P=P, x=self.state._get_boundary_dofs(), m=m, n=nn, h=h,
+                    J=Jfd,
+                    g=g,
+                    r=r,
+                    P=P,
+                    x=self.state._get_boundary_dofs(),
+                    m=m,
+                    n=nn,
+                    h=h,
                 )
             return Jfd
 
@@ -925,7 +955,9 @@ class FreeBoundaryRun(AbstractRun):
             return np.linalg.solve(JtJ + lam * D, -J.T @ g)
 
         for fb_update in range(1, fb_updates):
-            logger.info(f"============= Newton free-boundary update {fb_update} / {fb_updates} =============")
+            logger.info(
+                f"============= Newton free-boundary update {fb_update} / {fb_updates} ============="
+            )
             if J is None:
                 J = fd_jacobian()
                 jac_fresh = True
@@ -955,17 +987,23 @@ class FreeBoundaryRun(AbstractRun):
                     )
                     break
                 if not jac_fresh:
-                    logger.info("Newton step rejected with a Broyden Jacobian: rebuilding the FD Jacobian.")
+                    logger.info(
+                        "Newton step rejected with a Broyden Jacobian: rebuilding the FD Jacobian."
+                    )
                     self.state._restore_dofs()
                     J = fd_jacobian()
                     jac_fresh = True
                 else:
                     lam = max(100.0 * lam, 1e-8)
-                    logger.info(f"Newton step rejected: increasing the Levenberg-Marquardt parameter to {lam:.1e}.")
+                    logger.info(
+                        f"Newton step rejected: increasing the Levenberg-Marquardt parameter to {lam:.1e}."
+                    )
             if not accepted:
                 self.state._restore_dofs()
                 if np.max(np.abs(dy) * ynorm) >= noise_step:
-                    logger.warning("Newton free boundary: no decrease of |g| along the step; stopping.")
+                    logger.warning(
+                        "Newton free boundary: no decrease of |g| along the step; stopping."
+                    )
                 elif gtol > 0.0 and np.linalg.norm(g) > gtol:
                     logger.warning(
                         f"Newton free boundary: stalled above newton_gtol, |g| {np.linalg.norm(g):.3e} > {gtol:.3e}."
@@ -978,7 +1016,9 @@ class FreeBoundaryRun(AbstractRun):
             step_fresh = jac_fresh
             J = J + np.outer((g_new - g) - J @ sy, sy) / (sy @ sy)
             if slow and not jac_fresh:
-                logger.info("Newton: slow decrease of |g| with a Broyden Jacobian; rebuilding the FD Jacobian.")
+                logger.info(
+                    "Newton: slow decrease of |g| with a Broyden Jacobian; rebuilding the FD Jacobian."
+                )
                 J = None
             jac_fresh = False
             r, fields = r_new, fields_new
@@ -1021,7 +1061,9 @@ class FreeBoundaryRun(AbstractRun):
                     )
                     break
                 if not step_fresh:
-                    logger.info("Newton: step below newton_xtol but |g| above newton_gtol; rebuilding the FD Jacobian.")
+                    logger.info(
+                        "Newton: step below newton_xtol but |g| above newton_gtol; rebuilding the FD Jacobian."
+                    )
                     J = None
             if self.free_boundary_target <= free_boundary_tolerance:
                 logger.info("Newton free boundary: free-boundary target below tolerance.")
@@ -1207,11 +1249,17 @@ def _move_and_solve(state: MinimizationState, pert, blend_depth, minimize_tol, m
 
 def _fd_worker(task):
     """Process-pool worker for FreeBoundaryRun._fd_jacobian_parallel: residual differences for given perturbations."""
-    (params, statefile, coil_set, perts, blend_depth, minimize_tol, maxIter, digits, wdir) = task
+    (params, statefile, coil_set, perts, blend_depth, minimize_tol, maxIter, digits, wdir) = (
+        task
+    )
     wdir = Path(wdir)
     wdir.mkdir(parents=True, exist_ok=True)
     state = MinimizationState.new(
-        params, rundir=wdir, statefile=statefile, redirect_stdout=True, stdout_path=wdir / "stdout.txt"
+        params,
+        rundir=wdir,
+        statefile=statefile,
+        redirect_stdout=True,
+        stdout_path=wdir / "stdout.txt",
     )
     out = {}
     with chdir(wdir):
@@ -1397,9 +1445,7 @@ def _get_B2_fp(
         digits=digits,
     )
     time_1 = time.time()
-    logger.info(
-        f"time for BIEST: {time_1 - time_0:.3}s for {ntheta * nzeta_biest} points"
-    )
+    logger.info(f"time for BIEST: {time_1 - time_0:.3}s for {ntheta * nzeta_biest} points")
     if state.clockwise_zeta:
         B_plas_ext = np.flip(B_plas_ext, axis=1)
 
