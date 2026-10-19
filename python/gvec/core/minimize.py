@@ -187,7 +187,9 @@ class MinimizationState(State):
     @with_binding
     def save_statefile(self):
         logger.debug("Writing state to file.")
-        with chdir(self.rundir):  # the file name has no directory: write it next to the parameter file
+        with chdir(
+            self.rundir
+        ):  # the file name has no directory: write it next to the parameter file
             _state.save_statefile()
 
     @property
@@ -303,7 +305,9 @@ class MinimizationState(State):
             # the boundary moves during a free-boundary run: write the current boundary, not the input one
             self.parameters.update(self._boundary_parameters())
             # the current boundary already contains the initial boundary perturbation: do not apply it again
-            for key in [k for k in self.parameters if k.lower().startswith(("x1pert_b_", "x2pert_b_"))]:
+            for key in [
+                k for k in self.parameters if k.lower().startswith(("x1pert_b_", "x2pert_b_"))
+            ]:
                 del self.parameters[key]
             self.parameters["boundary_perturb"] = False
 
