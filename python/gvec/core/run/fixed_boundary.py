@@ -98,8 +98,8 @@ class FixedBoundaryRun(AbstractRun):
             )
         # postprocessing
         statefiles_found = sorted(self.rundir.glob("*State*.dat"))
-        if len(statefiles_found) > 0:
-            FileNotFoundError(f"Could not find any State files in rundir {self.rundir}")
+        if len(statefiles_found) == 0:
+            raise FileNotFoundError(f"Could not find any State files in rundir {self.rundir}")
         self.state.statefile = Path(statefiles_found[-1]).absolute()
 
         iterations = self.state.get_iterations()

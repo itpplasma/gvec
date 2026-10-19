@@ -65,7 +65,13 @@ class FreeBoundaryRun(AbstractRun):
         self._resolved_force_ratio = 1.0
 
         self.m_max, self.n_max = self.state.get_mn_max()
+        self._reset_convergence_statistics()
 
+        if self._has_initial_stage:
+            self.stages[0]["free_boundary"] = {"updates": 0}
+
+    def _reset_convergence_statistics(self):
+        """Forget the step/gradient norms and moving averages; each stage starts its own statistics."""
         self.target_mavg_last = np.nan
         self.target_mavg = np.nan
 
@@ -75,9 +81,6 @@ class FreeBoundaryRun(AbstractRun):
 
         self.xnorm_mavg = np.nan
         self.gnorm_mavg = np.nan
-
-        if self._has_initial_stage:
-            self.stages[0]["free_boundary"] = {"updates": 0}
 
     def _allocate_diagnostics(self, track_boundary_fields: bool):
         """Setup the diagnostics dataset."""
@@ -276,6 +279,8 @@ class FreeBoundaryRun(AbstractRun):
         """
 
         # start with a fixed boundary equilibrium
+        # the norms of the previous stage must not feed this stage's moving averages and stop criteria
+        self._reset_convergence_statistics()
 
         # how many free boundary updates,
         # NOTE: required parameter
@@ -520,21 +525,14 @@ class FreeBoundaryRun(AbstractRun):
                         # Step-size dt is reduced if the moving average of the target increases until the minimum step-size is reached,
                         # otherwise it is increased. However, some algorithms such as BFGS also perform step-size estimations, which overwrite
                         # the provided step-size, if the estimated step-size is SMALLER.
-                        if (
-                            self.target_mavg_last < self.target_mavg or dt < min_dt
-                        ) and step_size_heuristic:
-                            dt = max(0.5 * dt, min_dt)
-                        elif step_size_heuristic:
-                            dt = min(1.1 * dt, max_dt)
-
-                        # this is relevant to whipe the memory of methods like BFGS and aGD
-                        if dt <= min_dt and reset_minimizer and step_size_heuristic:
-                            reset_minimizer = True
-                            logger.warning(
-                                "Reached minimum step-size! Resetting free boundary minimizer."
+                        if step_size_heuristic:
+                            dt, reset_minimizer = _descent_step_size(
+                                dt, self.target_mavg_last, self.target_mavg, min_dt, max_dt
                             )
-                        elif step_size_heuristic:
-                            reset_minimizer = False
+                            if reset_minimizer:
+                                logger.warning(
+                                    "Reached minimum step-size! Resetting free boundary minimizer."
+                                )
 
                         logger.info(f"Free boundary dt: {dt:.2e}")
 
@@ -678,8 +676,8 @@ class FreeBoundaryRun(AbstractRun):
 
         # postprocessing
         statefiles_found = sorted(self.rundir.glob("*State*.dat"))
-        if len(statefiles_found) > 0:
-            FileNotFoundError(f"Could not find any State files in rundir {self.rundir}")
+        if len(statefiles_found) == 0:
+            raise FileNotFoundError(f"Could not find any State files in rundir {self.rundir}")
         self.state.statefile = Path(statefiles_found[-1]).absolute()
 
         logfiles = sorted(self.rundir.glob("logMinimizer_*"))
@@ -1169,6 +1167,17 @@ class FreeBoundaryRun(AbstractRun):
         return (fig, axs)
 
 
+def _descent_step_size(dt, target_mavg_last, target_mavg, min_dt, max_dt):
+    """Step-size heuristic of the descent update: halve dt (down to min_dt) when the moving-average target
+    increased, else grow it by 10 % (up to max_dt). Returns (dt, reset_minimizer); the free-boundary minimizer is
+    reset (its memory, e.g. the mGD momentum or the lBFGS pairs, is wiped) when dt is held at min_dt."""
+    if target_mavg_last < target_mavg or dt < min_dt:
+        dt = max(0.5 * dt, min_dt)
+    else:
+        dt = min(1.1 * dt, max_dt)
+    return dt, dt <= min_dt
+
+
 # ============= NEWTON HELPERS ===========================
 def _boundary_residual(state: MinimizationState, coil_set, digits_BIEST: int):
     """Boundary force of `state` with B_ext (coils + BIEST) on its current boundary.
@@ -1381,13 +1390,21 @@ def _get_B2_fp(
         boundary_biest = boundary.pos.values
         B_coils_biest = B_coils.copy()
 
+    # BIEST imposes the circulation I_biest along its poloidal index (theta) when the tangent of its toroidal index
+    # crossed with e_theta points out of the plasma, and -I_biest otherwise. Its toroidal index runs along +phi (the
+    # field periods are completed by rotations about +z). GVEC's (rho, theta, zeta) is right-handed, so
+    # e_theta x e_zeta points outwards: with clockwise zeta the toroidal tangent is -e_zeta and the orientation is
+    # outward, with counter-clockwise zeta it is e_zeta and inward, which reverses the sign of the current. GVEC's
+    # I_tor is the circulation of B along theta in both cases.
+    I_biest = mu_0 * I_tor if state.clockwise_zeta else -mu_0 * I_tor
+
     # main BIEST calculation
     time_0 = time.time()
     B_plas_ext = get_B_ext_plasma(
         boundary_biest,
         state.nfp,
         B_coils_biest,
-        I_tor * mu_0,
+        I_biest,
         digits=digits,
     )
     time_1 = time.time()
