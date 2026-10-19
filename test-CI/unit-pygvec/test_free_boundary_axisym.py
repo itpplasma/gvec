@@ -291,7 +291,16 @@ class _ToyBoundaryState:
 
 
 def _toy_newton(
-    monkeypatch, y_start, y_ref, stiffness, curvature, maxIter=1000, totaliter=None, **fbp
+    monkeypatch,
+    y_start,
+    y_ref,
+    stiffness,
+    curvature,
+    maxIter=1000,
+    totaliter=None,
+    basis=None,
+    residual=None,
+    **fbp,
 ):
     """Run FreeBoundaryRun._run_newton on the residual g(y) = stiffness * e + curvature * e**2, e = y - y_ref, whose
     zero is the reference state. The quadratic term makes the finite-difference Jacobian (step 1e-4) of the
@@ -308,10 +317,16 @@ def _toy_newton(
     }
     run.free_boundary_target = 1.0
     run._update_diagnostics = lambda *args: None
-    monkeypatch.setattr(fb, "_normal_displacement_basis", lambda state: (np.eye(k), np.ones(k)))
+    if basis is None:
+        basis = lambda y: np.eye(k)  # noqa: E731
+    monkeypatch.setattr(
+        fb, "_normal_displacement_basis", lambda state: (basis(state.y), np.ones(k))
+    )
 
-    def residual(digits):
+    def toy_residual(digits):
         e = run.state.y - y_ref
+        if residual is not None:
+            return residual(run.state.y), ()
         return stiffness * e + curvature * e**2, ()
 
     def move(pert, blend_depth, minimize_tol, maxIter):
@@ -319,7 +334,7 @@ def _toy_newton(
         run.state.solve(maxIter=maxIter)
         return True
 
-    run._fb_residual = residual
+    run._fb_residual = toy_residual
     run._fb_move_and_solve = move
     run._run_newton(100, 0.0, 1e-8, maxIter, 8, -1.0, totaliter=totaliter)
     return run
@@ -362,6 +377,54 @@ def test_newton_respects_totaliter_budget(monkeypatch):
             monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10, totaliter=35
         ).state.iterations
         == 35
+    )
+
+
+def test_newton_jacobian_follows_the_moving_basis(monkeypatch):
+    """The normal-displacement basis is rebuilt from the current boundary after every step, so the Broyden
+    Jacobian must be expressed in the new basis. Linear force K (y - y_ref) with a basis that rotates with the
+    boundary: the Jacobian handed back is P^T K P for the final basis, not for the initial one."""
+    rng = np.random.default_rng(3)
+    Q = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+    K = Q.T @ np.diag([2e4, 1e3, 50.0]) @ Q
+    y_ref = np.array([0.30, -0.10, 0.02])
+    y_start = y_ref + np.array([0.01, -0.02, 0.015])
+
+    def basis(y):  # rotation about the first axis by an angle that depends on the boundary
+        c, s = np.cos(15 * y[1]), np.sin(15 * y[1])
+        return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+    run = _toy_newton(
+        monkeypatch,
+        y_start,
+        y_ref,
+        None,
+        None,
+        basis=basis,
+        residual=lambda y: K @ (y - y_ref),
+        newton_xtol=0.0,
+        newton_rtol=1e-6,
+        newton_noise_step=0.0,
+    )
+    P0, P1 = basis(y_start), basis(run.state.y)
+    assert np.abs(P1 - P0).max() > 0.1  # the basis really moved
+    J = run.newton_jacobian
+    np.testing.assert_allclose(J, P1.T @ K @ P1, rtol=1e-6, atol=1e-6 * np.abs(K).max())
+    assert np.linalg.norm(run.state.y - y_ref) < 1e-6
+
+
+def test_change_jacobian_basis_rectangular():
+    """For P with more rows than columns the new Jacobian is the one of the restriction to span(P_old)."""
+    from gvec.core.run.free_boundary import _change_jacobian_basis
+
+    rng = np.random.default_rng(1)
+    P_old = np.linalg.qr(rng.normal(size=(5, 3)))[0]
+    A = rng.normal(size=(5, 5))
+    R = A.T @ A
+    J = P_old.T @ R @ P_old
+    P_new = P_old @ np.linalg.qr(rng.normal(size=(3, 3)))[0]  # same span, rotated
+    np.testing.assert_allclose(
+        _change_jacobian_basis(J, P_old, P_new), P_new.T @ R @ P_new, atol=1e-10
     )
 
 

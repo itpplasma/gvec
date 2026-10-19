@@ -1062,7 +1062,11 @@ class FreeBoundaryRun(AbstractRun):
             jac_fresh = False
             r, fields = r_new, fields_new
             self.state._checkpoint_dofs()
+            P_old = P
             P, ynorm = basis()
+            if J is not None:
+                # J maps steps y to changes of g = P^T r in the basis P_old, which follows the old boundary
+                J = _change_jacobian_basis(J, P_old, P)
             g = P.T @ r
             self.xnorm = float(np.max(np.abs(sy) * ynorm))
             self.gnorm = float(np.linalg.norm(g))
@@ -1254,6 +1258,14 @@ class FreeBoundaryRun(AbstractRun):
         )
         axs[1].legend()
         return (fig, axs)
+
+
+def _change_jacobian_basis(J: np.ndarray, P_old: np.ndarray, P_new: np.ndarray):
+    """Express a Jacobian J = P_old^T R P_old of the boundary force (dr = R dx) in the basis P_new:
+    J' = P_new^T R P_new with R replaced by its restriction to the span of P_old, R = P_old^+T J P_old^+.
+    With T = P_old^+ P_new (the P_old coordinates of the new basis), J' = T^T J T; exact if P_old is square."""
+    T = np.linalg.lstsq(P_old, P_new, rcond=None)[0]
+    return T.T @ J @ T
 
 
 def _last_filled_update(diagnostic: xr.DataArray) -> int:
