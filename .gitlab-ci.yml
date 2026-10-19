@@ -57,7 +57,7 @@ variables:
   PYTEST_KEY_OPTS: ""               # default value
   PYTEST_EXTRA_OPTS: ""
   PRIVATE_RUNNER_PIPELINE:
-   value: "true"
+   value: "false"  # fork has no raven/viper runners (jobs stuck_pending_no_matching_runners)
    options: ["true", "false"]
    description: "''true'' to include the SLURM jobs in the pipeline, ''false'' to exclude them from the pipeline"
   F90WRAP_GITHUB:
