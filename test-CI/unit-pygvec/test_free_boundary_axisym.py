@@ -317,3 +317,31 @@ def test_saved_parameters_do_not_repeat_boundary_perturbation(tmp_path):
     (tmp_path / "b").mkdir()
     st2 = MinimizationState.new(gvec.util.read_parameters(st.parameterfile), rundir=tmp_path / "b")
     np.testing.assert_allclose(st2._get_boundary_dofs(), x0, rtol=0, atol=1e-14)
+
+
+def test_save_and_restart_reproduce_state(tmp_path, monkeypatch):
+    """save() writes the state file into the run directory it reports (also when the working directory is
+    elsewhere), and a state restarted from the saved parameter and state files has the same boundary and the same
+    boundary force."""
+    from gvec.core.minimize import MinimizationState
+
+    monkeypatch.chdir(tmp_path)
+    p = _params()
+    p.update(ProjectName="RS", FreeBoundary=True, init_LA=False)  # init_LA=T would recompute lambda on restart
+    p["pres"] = {"type": "polynomial", "coefs": [1e4, -1e4]}
+    (tmp_path / "a").mkdir()
+    st = MinimizationState.new(p, rundir=tmp_path / "a")
+    B2 = np.linspace(1.0, 2.0, st.t_n * st.z_n)
+    st.set_Bext_squared(B2)
+    st.solve(logfinaliter=False, maxIter=300, minimize_tol=1e-8)
+    pert = np.zeros_like(st._get_boundary_dofs())
+    pert[0] = 0.003
+    assert st._apply_boundary_perturbation(pert, 0.6)
+    x0, f0 = st._get_boundary_dofs(), st._eval_boundary_forces()
+    st.save()
+    assert st.statefile.parent == tmp_path / "a" and st.statefile.exists()
+    (tmp_path / "b").mkdir()
+    st2 = MinimizationState.new(gvec.util.read_parameters(st.parameterfile), rundir=tmp_path / "b", statefile=st.statefile)
+    st2.set_Bext_squared(B2)
+    np.testing.assert_allclose(st2._get_boundary_dofs(), x0, rtol=1e-14, atol=0)
+    np.testing.assert_allclose(st2._eval_boundary_forces(), f0, rtol=0, atol=1e-10 * np.abs(f0).max())

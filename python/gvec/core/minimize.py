@@ -187,7 +187,8 @@ class MinimizationState(State):
     @with_binding
     def save_statefile(self):
         logger.debug("Writing state to file.")
-        _state.save_statefile()
+        with chdir(self.rundir):  # the file name has no directory: write it next to the parameter file
+            _state.save_statefile()
 
     @property
     def iota(self) -> BSpline | Polynomial:
