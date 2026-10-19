@@ -300,3 +300,20 @@ def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     assert np.linalg.norm(legacy.state.y - y_ref) > 1e-7  # stops on the step size, far from the reference
     assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
     assert fixed.gnorm < 1e-7
+
+
+def test_saved_parameters_do_not_repeat_boundary_perturbation(tmp_path):
+    """The parameter file saved by a free-boundary state holds the current boundary, which already contains the
+    boundary perturbation of the parameters: a state started from that file has the same boundary."""
+    from gvec.core.minimize import MinimizationState
+
+    p = _params()
+    p.update(ProjectName="SP", FreeBoundary=True, boundary_perturb=True, boundary_perturb_type="cosm")
+    p["X1pert_b_cos"] = {(0, 0): 0.01}
+    (tmp_path / "a").mkdir()
+    st = MinimizationState.new(p, rundir=tmp_path / "a")
+    x0 = st._get_boundary_dofs()
+    st.save()
+    (tmp_path / "b").mkdir()
+    st2 = MinimizationState.new(gvec.util.read_parameters(st.parameterfile), rundir=tmp_path / "b")
+    np.testing.assert_allclose(st2._get_boundary_dofs(), x0, rtol=0, atol=1e-14)
