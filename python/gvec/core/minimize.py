@@ -298,6 +298,9 @@ class MinimizationState(State):
         logger.debug("Saving state")
         iters = self.get_iterations()
         outid = self.get_outputlevel()
+        if self.parameters.get("FreeBoundary", False):
+            # the boundary moves during a free-boundary run: write the current boundary, not the input one
+            self.parameters.update(self._boundary_parameters())
 
         self.save_statefile()
         # name hardcoded in pygvec/state.F90:save_statefile & state/restart.f90:WriteStateToASCII
@@ -678,6 +681,58 @@ class MinimizationState(State):
 
         return (m, n, forces_out)
 
+    def _boundary_parameters(self) -> dict:
+        """Current boundary as parameters {"X1_b_cos": {(m, n): value}, ...} (sine block first in the dof order)."""
+        m, n, _ = self._get_boundary_forces()
+        x = self._get_boundary_dofs()
+        n1 = self._get_X1_n_modes()
+        out = {}
+        for var, sl in (("X1", slice(0, n1)), ("X2", slice(n1, m.size))):
+            mm, nn, xx = m[sl], n[sl] // self.nfp, x[sl]  # parameters use n per field period
+            sincos = self.parameters.get(f"{var}_sin_cos", "_sincos_")
+            zero = np.nonzero((mm == 0) & (nn == 0))[0]
+            cos_start = 0 if sincos == "_cos_" else (zero[0] if zero.size else mm.size)
+            out[f"{var}_b_sin"] = {
+                (int(mm[i]), int(nn[i])): float(xx[i]) for i in range(cos_start) if xx[i] != 0.0
+            }
+            out[f"{var}_b_cos"] = {
+                (int(mm[i]), int(nn[i])): float(xx[i]) for i in range(cos_start, mm.size) if xx[i] != 0.0
+            }
+        return out
+
+    @with_binding
+    def _get_boundary_dofs(self) -> np.ndarray:
+        """Boundary coefficients (X1 modes, then X2 modes), in the order of `_get_boundary_forces`."""
+        x = np.asfortranarray(np.zeros(self._get_X1_n_modes() + self._get_X2_n_modes()))
+        _state.get_boundary_dofs(x)
+        return x
+
+    @with_binding
+    def _eval_boundary_forces(self) -> np.ndarray:
+        """Recompute and return the (unpreconditioned) boundary forces for the current state and B_ext^2, without the
+        spectral-condensation term (the pressure balance only)."""
+        f = np.asfortranarray(np.zeros(self._get_X1_n_modes() + self._get_X2_n_modes()))
+        _state.eval_boundary_forces(f)
+        return f
+
+    @with_binding
+    def _apply_boundary_perturbation(self, pert: np.ndarray, blend_depth: float = 0.6) -> bool:
+        """Add `pert` to the boundary coefficients, blended into the interior.
+
+        Returns False (state unchanged) if the perturbed state has a non-positive Jacobian."""
+        pert = np.asfortranarray(pert, dtype=float)
+        return bool(_state.apply_boundary_perturbation(pert, blend_depth))
+
+    @with_binding
+    def _checkpoint_dofs(self):
+        """Keep an in-memory copy of the current solution for `_restore_dofs`."""
+        _state.checkpoint_dofs()
+
+    @with_binding
+    def _restore_dofs(self):
+        """Restore the solution saved by `_checkpoint_dofs`."""
+        _state.restore_dofs()
+
     @with_binding
     def get_Fnorm_boundary(self):
         logger.debug("Extracting Fnorm at the boundary")
@@ -715,7 +770,7 @@ class MinimizationState(State):
         """
         ev_gvec = (
             self.evaluate("B", "p", "normal", "Phi_edge", rho=1.0)
-            .squeeze()
+            .isel(rad=0)  # not squeeze(): an axisymmetric state has a single toroidal point
             .transpose("xyz", "tor", "pol")
         )
         B_gvec_2 = (ev_gvec.B**2).sum(dim="xyz")

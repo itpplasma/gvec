@@ -37,6 +37,7 @@ DEFAULT_BLEND_DEPTH = 0.6
 DEFAULT_GTOL = 1e-8
 DEFAULT_XTOL = 1e-5
 DEFAULT_DIGITS_BIEST = 8
+BIEST_MIN_NZETA = 6  # BIEST asserts Nt >= PATCH_DIM (= 6) toroidal points per field period
 DEFAULT_FB_TOLERANCE = 1e-8
 FORCE_RATIO_MINIMUM_FORCE = 1e-12
 DEFAULT_FTOL = 1e-5
@@ -433,8 +434,20 @@ class FreeBoundaryRun(AbstractRun):
             self._update_diagnostics(B_ext_2, B_coils, B_plas_ext, 0, dt)
 
             fb_update = 0
+            method = self._state_parameters["free_boundary"].get("method", "descent")
+            if method not in ("descent", "newton"):
+                raise ValueError(f"Unknown free-boundary method: {method}")
             try:  # allow clean abort with KeybordInterrupt
-                for fb_update in range(1, fb_updates):
+                if method == "newton" and fb_updates > 1:
+                    fb_update = self._run_newton(
+                        fb_updates=fb_updates,
+                        blend_depth=blend_depth,
+                        minimize_tol=minimize_tol_min,
+                        maxIter=self._state_parameters["maxIter"],
+                        digits_BIEST=digits_BIEST,
+                        free_boundary_tolerance=free_boundary_tolerance,
+                    )
+                for fb_update in range(1, fb_updates if method == "descent" else 0):
                     logger.info(
                         f"============= free-boundary update {fb_update} / {fb_updates} ============="
                     )
@@ -467,8 +480,11 @@ class FreeBoundaryRun(AbstractRun):
                         logger.info(f"Setting gvec minimize_tol: {minimize_tol:.2e}")
 
                     fb_target_reached = self.free_boundary_target <= free_boundary_tolerance
-                    ftol_reached = self.fdelta <= ftol
-                    xtol_reached = self.xnorm_mavg <= xtol
+                    # ftol is relative to the moving-average target, and ftol/xtol act only on a full
+                    # moving-average window (before that, fdelta and xnorm_mavg describe 1-2 updates)
+                    window_full = fb_update > MOVING_AVERAGE_WINDOW
+                    ftol_reached = window_full and self.fdelta <= ftol * abs(self.target_mavg)
+                    xtol_reached = window_full and self.xnorm_mavg <= xtol
                     gtol_reached = self.gnorm_mavg <= gtol
                     force_ratio_limit_reached = self._resolved_force_ratio <= force_ratio_limit
 
@@ -634,7 +650,6 @@ class FreeBoundaryRun(AbstractRun):
                 fb_aux = (
                     self.diagnostics_stage[f"stage_{self.nth_stage}"]
                     .force_balance.isel(updates=fb_update - 1)
-                    .squeeze()
                     .transpose("pol", "tor")
                 )
                 M_proposed, N_proposed = minimal_modes_force_balance(
@@ -715,6 +730,306 @@ class FreeBoundaryRun(AbstractRun):
             self.max_force = max([forces[force].item() for force in forces])
         else:
             self.max_force = np.inf
+
+    # ============= NEWTON BOUNDARY UPDATE ===========================
+    def _fb_residual(self, digits_BIEST: int):
+        """Boundary force of the current (interior-converged) state with B_ext from the coils and BIEST
+        evaluated on the current boundary. Returns (residual, (B_ext_2, B_coils, B_plas_ext))."""
+        r, fields, self.I_tor_boundary = _boundary_residual(self.state, self.coil_set, digits_BIEST)
+        return r, fields
+
+    def _fb_move_and_solve(self, pert, blend_depth, minimize_tol, maxIter):
+        return _move_and_solve(self.state, pert, blend_depth, minimize_tol, maxIter)
+
+    def _fd_jacobian_parallel(self, perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers):
+        """Forward differences of the boundary force along the columns of `perts` (n_dofs x k), computed in
+        `workers` separate processes (one GVEC instance each, one OpenMP thread each). Each worker restarts from a
+        statefile of the current (checkpointed) state and differences against its own base residual.
+        Returns the (n_dofs x k) matrix of residual differences (not divided by the step).
+
+        """
+        import os
+
+        self.state._restore_dofs()
+        self.state.save("!Newton free-boundary base state\n")
+        statefile = Path(self.state.statefile).absolute()
+        k = perts.shape[1]
+        groups = [list(range(i, k, workers)) for i in range(min(workers, k))]
+        tasks = [
+            (
+                self._state_parameters,
+                str(statefile),
+                self.coil_set,
+                {j: perts[:, j] for j in g},
+                blend_depth,
+                minimize_tol,
+                maxIter,
+                digits_BIEST,
+                str((Path.cwd() / f"newton_worker_{i:03d}").absolute()),
+            )
+            for i, g in enumerate(groups)
+        ]
+        # plain subprocesses (no multiprocessing pool): no shared semaphores and no re-import of the driver script
+        import pickle
+        import subprocess
+        import sys
+
+        # one thread per worker, each pinned to its own CPU of the CPUs available to this process (cgroup), not of
+        # this thread's affinity: with OMP_PROC_BIND the master thread is bound to one core, and the workers would
+        # inherit that mask (and bind to the same first core through OMP_PLACES)
+        env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
+        env["OMP_PROC_BIND"] = "false"
+        env.pop("OMP_PLACES", None)
+        cpus = _allowed_cpus()
+        procs = []
+        for i, task in enumerate(tasks):
+            cpu = {cpus[i % len(cpus)]}
+            wdir = Path(task[-1])
+            wdir.mkdir(parents=True, exist_ok=True)
+            (wdir / "task.pkl").write_bytes(pickle.dumps(task))
+            (wdir / "result.pkl").unlink(missing_ok=True)
+            cmd = [sys.executable, "-c", "from gvec.core.run.free_boundary import _fd_worker_main; _fd_worker_main()",
+                   str(wdir / "task.pkl")]
+            with open(wdir / "worker.log", "w") as log:
+                procs.append(
+                    subprocess.Popen(
+                        cmd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                        preexec_fn=lambda cpu=cpu: os.sched_setaffinity(0, cpu),
+                    )
+                )
+        codes = [p.wait() for p in procs]
+        if any(codes):
+            raise RuntimeError(f"Newton FD workers failed (exit codes {codes}); see newton_worker_*/worker.log")
+        results = [pickle.loads((Path(t[-1]) / "result.pkl").read_bytes()) for t in tasks]
+        dR = np.zeros((perts.shape[0], k))
+        for res in results:
+            for j, col in res.items():
+                dR[:, j] = col
+        return dR
+
+    def _run_newton(
+        self,
+        fb_updates: int,
+        blend_depth: float,
+        minimize_tol: float,
+        maxIter: int,
+        digits_BIEST: int,
+        free_boundary_tolerance: float,
+    ) -> int:
+        """Newton iteration for the free boundary.
+
+        Unknowns: the normal displacement of the boundary, xi(theta, zeta) = sum_k y_k phi_k with the Fourier
+        functions phi_k of the X1 boundary basis; the boundary coefficients change by dx = P y, P[:, k] being the
+        boundary-basis projection of phi_k times the unit normal of the boundary curve in the zeta = const plane
+        (`newton_space = "normal"`, default). Equations: g(y) = P^T F_b = 0, the virtual work of the boundary force
+        F_b (pressure balance [[B^2/2 + mu_0 p]] in the weak form; the spectral-condensation term of the descent
+        force is left out, since its normal part is not zero and biases the shape by up to ~0.4 mm) along the
+        normal displacements. F_b is that of the interior equilibrium with the
+        displaced boundary and B_ext = coils + BIEST evaluated on the displaced boundary. With
+        `newton_space = "full"`, the unknowns are all boundary coefficients (P = I); this includes the nearly
+        singular tangential re-parametrisations, whose stiffness is only the spectral-condensation weight.
+
+        The Jacobian dg/dy is built by forward differences with step `newton_fd_step` [m] (one interior solve and
+        one BIEST call per unknown; `newton_workers` > 1 runs them in parallel processes), updated by Broyden's
+        rule after accepted steps and rebuilt when a step is rejected. Steps are Levenberg-Marquardt regularised,
+        limited to `newton_max_step` [m] and backtracked on |g|. Unlike gradient descent on the boundary force,
+        the rate does not depend on the ratio of stiff (toroidal-field, area) and soft (poloidal-field, position
+        and shape) boundary modes, and modes that are unstable with fixed coil currents (vertical position) are
+        converged as well.
+
+        Stops when the largest normal-mode amplitude of the step is below `newton_xtol` [m], when a step smaller
+        than `newton_noise_step` [m] does not decrease |g| (noise floor), when |g| fell below `newton_rtol` times its
+        initial value or below `newton_gtol`, when the free-boundary target is below the tolerance, or when the
+        update budget is used up. A small step or a failed line search is a step-size criterion only: a step in the
+        stiff modes can be micrometres while |g| is still far above what the problem reaches. With `newton_gtol` > 0
+        (absolute, in the units of |g|), a small step therefore does not stop the update while |g| > `newton_gtol`
+        unless it was computed from a freshly built finite-difference Jacobian and did not reduce |g| by more than a
+        factor `newton_rebuild_ratio` (then the run stops with a warning that it stalled above `newton_gtol`). A
+        rejected step always rebuilds a Broyden Jacobian before the noise-floor stop is considered.
+        Returns the last update index."""
+        fbp = self._state_parameters["free_boundary"]
+        h = fbp.get("newton_fd_step", 1e-4)
+        xtol = fbp.get("newton_xtol", 1e-6)
+        rtol = fbp.get("newton_rtol", 1e-8)
+        gtol = fbp.get("newton_gtol", 0.0)
+        max_step = fbp.get("newton_max_step", 0.05)
+        lm = fbp.get("newton_lm", 1e-12)
+        max_backtracks = fbp.get("newton_max_backtracks", 6)
+        save_jacobian = fbp.get("newton_save_jacobian", False)
+        workers = int(fbp.get("newton_workers", 1))
+        space = fbp.get("newton_space", "normal")
+        noise_step = fbp.get("newton_noise_step", 1e-5)
+        rebuild_ratio = fbp.get("newton_rebuild_ratio", 0.5)
+
+        self.newton_history = []
+        # the finite differences need a converged base state
+        self.state.reset_descent()
+        self.state.solve(logfinaliter=False, maxIter=maxIter, minimize_tol=minimize_tol)
+        self.state._checkpoint_dofs()
+        r, fields = self._fb_residual(digits_BIEST)
+
+        def basis():
+            if space == "normal":
+                return _normal_displacement_basis(self.state)
+            if space == "full":
+                return np.eye(r.size), np.ones(r.size)
+            raise ValueError(f"Unknown newton_space: {space}")
+
+        P, ynorm = basis()  # ynorm: max over the boundary of |xi| per unit y_k
+        g = P.T @ r
+        g_init = np.linalg.norm(g)
+        k = P.shape[1]
+        J = None
+        self._newton_last_fd_jacobian = None
+        # optional start Jacobian (a newton_jacobian_*.npz of a run with the same resolution and newton_space),
+        # e.g. the RMP-off Jacobian for an RMP amplitude scan
+        if (jac_file := fbp.get("newton_initial_jacobian")) is not None:
+            J = np.load(jac_file)["J"]
+            if J.shape != (k, k):
+                raise ValueError(f"newton_initial_jacobian has shape {J.shape}, expected {(k, k)}")
+            self._newton_last_fd_jacobian = J
+            logger.info(f"Newton: initial Jacobian from {jac_file}")
+        jac_fresh = False
+        n_jac = 0
+        fb_update = 0
+
+        def fd_jacobian():
+            nonlocal n_jac
+            t0 = time.time()
+            perts = h * P
+            if workers > 1:
+                dR = self._fd_jacobian_parallel(perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers)
+            else:
+                dR = np.zeros((r.size, k))
+                for j in range(k):
+                    if not self._fb_move_and_solve(perts[:, j], blend_depth, minimize_tol, maxIter):
+                        raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
+                    dR[:, j] = self._fb_residual(digits_BIEST)[0] - r
+                self.state._restore_dofs()
+            Jfd = P.T @ dR / h
+            self._newton_last_fd_jacobian = Jfd
+            n_jac += 1
+            logger.info(f"Newton: FD Jacobian ({k} columns, {workers} workers) in {time.time() - t0:.1f}s")
+            if save_jacobian:
+                m, nn, _ = self.state._get_boundary_forces()
+                np.savez(
+                    f"newton_jacobian_{n_jac:03d}.npz",
+                    J=Jfd, g=g, r=r, P=P, x=self.state._get_boundary_dofs(), m=m, n=nn, h=h,
+                )
+            return Jfd
+
+        def lm_step(J, g, lam):
+            JtJ = J.T @ J
+            D = np.diag(np.diag(JtJ)).copy()
+            D[D == 0] = 1.0
+            return np.linalg.solve(JtJ + lam * D, -J.T @ g)
+
+        for fb_update in range(1, fb_updates):
+            logger.info(f"============= Newton free-boundary update {fb_update} / {fb_updates} =============")
+            if J is None:
+                J = fd_jacobian()
+                jac_fresh = True
+            lam = lm
+            accepted = False
+            for attempt in range(3):
+                dy = lm_step(J, g, lam)
+                dmax = np.max(np.abs(dy) * ynorm)
+                if dmax > max_step:
+                    dy *= max_step / dmax
+                alpha = 1.0
+                for _ in range(max_backtracks):
+                    sy = alpha * dy
+                    if self._fb_move_and_solve(P @ sy, blend_depth, minimize_tol, maxIter):
+                        r_new, fields_new = self._fb_residual(digits_BIEST)
+                        g_new = P.T @ r_new
+                        if np.linalg.norm(g_new) < (1.0 - 1e-4 * alpha) * np.linalg.norm(g):
+                            accepted = True
+                            break
+                    alpha *= 0.5
+                if accepted:
+                    break
+                if np.max(np.abs(dy) * ynorm) < noise_step and jac_fresh:
+                    logger.info(
+                        "Newton step below newton_noise_step rejected with a fresh FD Jacobian: |g| is at its noise "
+                        "floor (inner tolerance, BIEST accuracy); stopping."
+                    )
+                    break
+                if not jac_fresh:
+                    logger.info("Newton step rejected with a Broyden Jacobian: rebuilding the FD Jacobian.")
+                    self.state._restore_dofs()
+                    J = fd_jacobian()
+                    jac_fresh = True
+                else:
+                    lam = max(100.0 * lam, 1e-8)
+                    logger.info(f"Newton step rejected: increasing the Levenberg-Marquardt parameter to {lam:.1e}.")
+            if not accepted:
+                self.state._restore_dofs()
+                if np.max(np.abs(dy) * ynorm) >= noise_step:
+                    logger.warning("Newton free boundary: no decrease of |g| along the step; stopping.")
+                elif gtol > 0.0 and np.linalg.norm(g) > gtol:
+                    logger.warning(
+                        f"Newton free boundary: stalled above newton_gtol, |g| {np.linalg.norm(g):.3e} > {gtol:.3e}."
+                    )
+                fb_update -= 1
+                break
+            # Broyden update and new base point; the basis follows the boundary. A Broyden Jacobian that
+            # reduces |g| by less than newton_rebuild_ratio per step is replaced by a new FD Jacobian.
+            slow = np.linalg.norm(g_new) > rebuild_ratio * np.linalg.norm(g)
+            step_fresh = jac_fresh
+            J = J + np.outer((g_new - g) - J @ sy, sy) / (sy @ sy)
+            if slow and not jac_fresh:
+                logger.info("Newton: slow decrease of |g| with a Broyden Jacobian; rebuilding the FD Jacobian.")
+                J = None
+            jac_fresh = False
+            r, fields = r_new, fields_new
+            self.state._checkpoint_dofs()
+            P, ynorm = basis()
+            g = P.T @ r
+            self.xnorm = float(np.max(np.abs(sy) * ynorm))
+            self.gnorm = float(np.linalg.norm(g))
+            self._update_diagnostics(*fields, fb_update, alpha)
+            self.iters_used = self.state.get_iterations()
+            self.newton_history.append(
+                dict(
+                    update=fb_update,
+                    residual=self.gnorm,
+                    residual_rel=self.gnorm / g_init,
+                    step_max=self.xnorm,
+                    alpha=alpha,
+                    target=self.free_boundary_target,
+                    jacobians=n_jac,
+                )
+            )
+            logger.info(
+                f"Newton: |g| {self.gnorm:.3e} (rel {self.gnorm / g_init:.2e}), max normal-mode step {self.xnorm:.2e} m, "
+                f"alpha {alpha:.3f}, target {self.free_boundary_target:.3e}, FD Jacobians {n_jac}"
+            )
+            if self.gnorm < rtol * g_init:
+                logger.info("Newton free boundary: |g| below newton_rtol.")
+                break
+            if gtol > 0.0 and self.gnorm < gtol:
+                logger.info("Newton free boundary: |g| below newton_gtol.")
+                break
+            if self.xnorm < xtol:
+                if gtol <= 0.0 or self.gnorm < gtol:
+                    logger.info("Newton free boundary: boundary step below newton_xtol.")
+                    break
+                if step_fresh and slow:
+                    logger.warning(
+                        f"Newton free boundary: step below newton_xtol from a fresh FD Jacobian without a decrease "
+                        f"of |g| ({self.gnorm:.3e} > newton_gtol {gtol:.3e}): stalled; stopping."
+                    )
+                    break
+                if not step_fresh:
+                    logger.info("Newton: step below newton_xtol but |g| above newton_gtol; rebuilding the FD Jacobian.")
+                    J = None
+            if self.free_boundary_target <= free_boundary_tolerance:
+                logger.info("Newton free boundary: free-boundary target below tolerance.")
+                break
+        # final (Broyden-updated) Jacobian, e.g. to be saved with np.savez(path, J=...) and passed as
+        # newton_initial_jacobian to a related run; the run directory is removed after the stage
+        self.newton_jacobian = J if J is not None else self._newton_last_fd_jacobian
+        return fb_update
 
     def plot_diagnostics_minimization(self):
         import matplotlib.pyplot as plt
@@ -860,6 +1175,150 @@ class FreeBoundaryRun(AbstractRun):
         return (fig, axs)
 
 
+# ============= NEWTON HELPERS ===========================
+def _boundary_residual(state: MinimizationState, coil_set, digits_BIEST: int):
+    """Boundary force of `state` with B_ext (coils + BIEST) on its current boundary.
+    Returns (residual, (B_ext_2, B_coils, B_plas_ext), I_tor at the boundary)."""
+    I_tor = state.evaluate("I_tor", rho=1.0).squeeze()["I_tor"].item()
+    (B2, B_plas_ext, B_coils, B_ext_2) = _get_B2_fp(
+        state=state,
+        coil_set=coil_set,
+        ntheta=state.t_n,
+        nzeta=state.z_n,
+        I_tor=I_tor,
+        diagnostic_output=True,
+        digits=digits_BIEST,
+    )
+    state.set_Bext_squared(B2)
+    return state._eval_boundary_forces(), (B_ext_2, B_coils, B_plas_ext), I_tor
+
+
+def _move_and_solve(state: MinimizationState, pert, blend_depth, minimize_tol, maxIter):
+    """From the checkpointed state, add the boundary perturbation `pert` and re-solve the interior.
+    Returns False (state restored) if the perturbed state is not valid (detJ <= 0)."""
+    state._restore_dofs()
+    if not state._apply_boundary_perturbation(pert, blend_depth):
+        state._restore_dofs()
+        return False
+    state.reset_descent()
+    state.solve(logfinaliter=False, maxIter=maxIter, minimize_tol=minimize_tol)
+    return True
+
+
+def _fd_worker(task):
+    """Process-pool worker for FreeBoundaryRun._fd_jacobian_parallel: residual differences for given perturbations."""
+    (params, statefile, coil_set, perts, blend_depth, minimize_tol, maxIter, digits, wdir) = task
+    wdir = Path(wdir)
+    wdir.mkdir(parents=True, exist_ok=True)
+    state = MinimizationState.new(
+        params, rundir=wdir, statefile=statefile, redirect_stdout=True, stdout_path=wdir / "stdout.txt"
+    )
+    out = {}
+    with chdir(wdir):
+        state.reset_descent()
+        state.solve(logfinaliter=False, maxIter=maxIter, minimize_tol=minimize_tol)
+        state._checkpoint_dofs()
+        r0, _, _ = _boundary_residual(state, coil_set, digits)
+        for j, pert in perts.items():
+            if not _move_and_solve(state, pert, blend_depth, minimize_tol, maxIter):
+                raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
+            out[j] = _boundary_residual(state, coil_set, digits)[0] - r0
+    return out
+
+
+def _allowed_cpus():
+    """CPUs available to this process: the cgroup (v2) cpuset if readable, else the parent's or own affinity."""
+    import os
+
+    def parse(text):
+        cpus = []
+        for part in text.strip().split(","):
+            if "-" in part:
+                a, b = part.split("-")
+                cpus += list(range(int(a), int(b) + 1))
+            elif part:
+                cpus.append(int(part))
+        return cpus
+
+    try:
+        rel = Path("/proc/self/cgroup").read_text().splitlines()[0].split(":", 2)[2]
+        cpus = parse((Path("/sys/fs/cgroup" + rel) / "cpuset.cpus.effective").read_text())
+        if cpus:
+            return sorted(cpus)
+    except (OSError, IndexError, ValueError):
+        pass
+    for pid in (os.getppid(), 0):
+        try:
+            return sorted(os.sched_getaffinity(pid))
+        except OSError:
+            continue
+    return [0]
+
+
+def _fd_worker_main():
+    """Entry point of a Newton FD worker subprocess: argv[1] = pickled task; writes result.pkl next to it."""
+    import pickle
+    import sys
+
+    path = Path(sys.argv[1])
+    out = _fd_worker(pickle.loads(path.read_bytes()))
+    (path.parent / "result.pkl").write_bytes(pickle.dumps(out))
+
+
+def _boundary_mode_list(state: MinimizationState):
+    """[(var, sc, m, n)] for the boundary dofs in the order of _get_boundary_forces (sine block first);
+    n is the toroidal mode number per field period (the basis function is sin/cos(m theta - n nfp zeta))."""
+    m, n, _ = state._get_boundary_forces()
+    n = n // state.nfp  # the Fortran mode table holds n * nfp
+    n1 = state._get_X1_n_modes()
+    out = []
+    for var, sl in (("X1", slice(0, n1)), ("X2", slice(n1, m.size))):
+        mm, nn = m[sl], n[sl]
+        zero = np.nonzero((mm == 0) & (nn == 0))[0]
+        cos_start = zero[0] if zero.size else mm.size
+        if "_cos_" == state.parameters.get(f"{var}_sin_cos", "_sincos_"):
+            cos_start = 0
+        for i in range(mm.size):
+            out.append((var, "s" if i < cos_start else "c", int(mm[i]), int(nn[i])))
+    return out
+
+
+def _normal_displacement_basis(state: MinimizationState, oversample: int = 4):
+    """Matrix P (n_dofs x k): column k holds the boundary coefficients of the in-plane normal displacement
+    xi = phi_k (unit normal of the boundary curve in each zeta = const plane), phi_k running over the Fourier
+    functions of the X1 boundary basis. Also returns max |phi_k| (= 1). Projection by trapezoidal quadrature on a
+    uniform grid that resolves the products exactly up to `oversample` times the maximum mode numbers."""
+    modes = _boundary_mode_list(state)
+    nfp = state.nfp
+    mmax = max(md[2] for md in modes)
+    nmax = max(abs(md[3]) for md in modes)
+    nt = oversample * (mmax + 1) + 1
+    nz = 1 if nmax == 0 else oversample * (nmax + 1) + 1
+    theta = np.arange(nt) * 2 * np.pi / nt
+    zeta = np.arange(nz) * 2 * np.pi / nfp / nz
+    ev = state.evaluate("X1", "X2", "dX1_dt", "dX2_dt", rho=[1.0], theta=theta, zeta=zeta)
+    ev = ev.isel(rad=0)
+    Rt = ev.dX1_dt.transpose("pol", "tor").values
+    Zt = ev.dX2_dt.transpose("pol", "tor").values
+    norm = np.hypot(Rt, Zt)
+    nR, nZ = Zt / norm, -Rt / norm
+    TH, ZE = np.meshgrid(theta, zeta, indexing="ij")
+
+    def fun(sc, m, n):
+        arg = m * TH - n * nfp * ZE
+        return np.sin(arg) if sc == "s" else np.cos(arg)
+
+    phis = [fun(sc, m, n) for (var, sc, m, n) in modes]
+    x1 = [i for i, md in enumerate(modes) if md[0] == "X1"]
+    P = np.zeros((len(modes), len(x1)))
+    for col, k in enumerate(x1):
+        fR, fZ = phis[k] * nR, phis[k] * nZ
+        for i, md in enumerate(modes):
+            f = fR if md[0] == "X1" else fZ
+            P[i, col] = np.sum(f * phis[i]) / np.sum(phis[i] ** 2)
+    return P, np.ones(len(x1))
+
+
 # ============= BIEST CALL ===========================
 def _get_B2_fp(
     state: State,
@@ -901,10 +1360,18 @@ def _get_B2_fp(
             "Could not import fbtools. Was free-boundary gvec (`gvec[free_boundary]`) installed?"
         ) from e
 
-    theta = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
-    theta += 0.5 * theta[1]
-    zeta = np.linspace(0, 2 * np.pi / state.nfp, nzeta, endpoint=False)
-    zeta += 0.5 * zeta[1]
+    # BIEST needs at least BIEST_MIN_NZETA toroidal points per field period (axisymmetric states have a
+    # single GVEC integration point). Evaluate on an odd multiple k of the GVEC points, so that the GVEC
+    # (cell-centered) points are a subset of the BIEST points, and sample the result back.
+    k_zeta = 1
+    while k_zeta * nzeta < BIEST_MIN_NZETA:
+        k_zeta += 2
+    nzeta_biest = k_zeta * nzeta
+    zeta_idx = k_zeta * np.arange(nzeta) + (k_zeta - 1) // 2
+
+    # cell-centered points; the spacing must not be read from the points themselves
+    theta = (np.arange(ntheta) + 0.5) * (2 * np.pi / ntheta)
+    zeta = (np.arange(nzeta_biest) + 0.5) * (2 * np.pi / state.nfp / nzeta_biest)
 
     # get the boundary for the full device (=all field periods)
     boundary = state.evaluate("pos", rho=1.0, zeta=zeta, theta=theta)
@@ -930,9 +1397,15 @@ def _get_B2_fp(
         digits=digits,
     )
     time_1 = time.time()
-    logger.info(f"time for BIEST: {time_1 - time_0:.3}s for {ntheta * nzeta} points")
+    logger.info(
+        f"time for BIEST: {time_1 - time_0:.3}s for {ntheta * nzeta_biest} points"
+    )
     if state.clockwise_zeta:
         B_plas_ext = np.flip(B_plas_ext, axis=1)
+
+    # back to the GVEC integration points
+    B_plas_ext = B_plas_ext[:, zeta_idx, :]
+    B_coils = B_coils[:, zeta_idx, :]
 
     # Bext^2
     B_external = B_plas_ext + B_coils

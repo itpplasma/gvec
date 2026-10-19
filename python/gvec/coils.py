@@ -980,13 +980,13 @@ def get_phi_edge_from_coils(state: State, coil_set: CoilSet | Coil):
 
     # consider full boundary since it might not be in equilibrium with the coils
     zeta = np.linspace(0, 2 * np.pi, nz * state.nfp, endpoint=False)
-    ev = state.evaluate("pos", "e_theta", "g_tt", rho=1.0, zeta=zeta).squeeze()
+    ev = state.evaluate("pos", "e_theta", "g_tt", rho=1.0, zeta=zeta).isel(rad=0)
     ev_coils = coil_set.eval_A(ev.pos)
     l_norm = ev.e_theta / np.sqrt((ev.e_theta**2).sum(dim="xyz"))
 
     # dl(i) = sqrt(g_ii) * du^i
     Adl = xr.dot(ev_coils.A, l_norm, dim="xyz") * np.sqrt(ev.g_tt)
-    delta_zeta = zeta[1] - zeta[0]
+    delta_zeta = 2 * np.pi / (nz * state.nfp)  # not zeta[1] - zeta[0]: axisymmetric states have nz = 1
 
     # average toroidaly, integrate poloidaly
     Psi = delta_zeta * (Adl * Adl.pol_weight).sum(dim=("pol", "tor")) / (2 * np.pi)

@@ -115,7 +115,7 @@ SUBROUTINE BiotSavart_CoilSet(n_coils, coil_points_offsets,n_points_per_coil, n_
 
     ! coil points are ordered so that, coil_points(:,coil_points_offsets(i)+1:coil_points_offsets(i+1)) corresponds to the i-th coil.
     REAL(wp), INTENT(IN) :: coil_points(3,n_coil_points) !! x,y,z, vertices for all coils
-    REAL(wp), INTENT(IN) :: coil_currents(n_coils) !! I_coil * mu_0/(2*pi) for each coil
+    REAL(wp), INTENT(IN) :: coil_currents(n_coils) !! I_coil * mu_0/(4*pi) for each coil (= Coil.prefactor)
     INTEGER,  INTENT(IN) :: n_positions        !! number of positions where the magnetic field is evaluated
     REAL(wp), INTENT(IN) :: xyz(3,n_positions) !! x,y,z positions where the magnetic field is evaluated
     ! OUTPUT VARIABLES -------------------------!
