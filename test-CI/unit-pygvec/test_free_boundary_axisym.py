@@ -148,6 +148,17 @@ def test_boundary_perturbation_and_checkpoint(tmp_path):
     np.testing.assert_array_equal(state._get_boundary_dofs(), x0)
 
 
+def test_update_boundary_returns_the_used_stepsize(tmp_path):
+    """pygvec's update_boundary returns the free-boundary step-size (it used to return an undefined value)."""
+    state = _minimization_state(tmp_path)
+    state.set_Bext_squared(np.full(state.t_n * state.z_n, 0.3))
+    state.reset_descent()
+    dt = 3e-3
+    dt_out = state.update_boundary(dt, True)
+    assert dt_out == pytest.approx(state.dt_free, rel=0, abs=0)
+    assert 0.0 < dt_out <= dt
+
+
 def test_normal_displacement_basis_circle(tmp_path):
     """For a circle R = R0 + a cos(t), Z = a sin(t) the unit normal is (cos t, sin t): a normal displacement 1
     changes a by 1, a normal displacement cos(t) gives dR = cos^2 t = 1/2 + cos(2t)/2, dZ = sin(2t)/2."""
