@@ -252,12 +252,13 @@ class _ToyBoundaryState:
     def __init__(self, y):
         self.y = y
         self._saved = y.copy()
+        self.iterations = 0
 
     def reset_descent(self):
         pass
 
     def solve(self, **kwargs):
-        pass
+        self.iterations += kwargs["maxIter"]  # worst case: every solve uses its whole allowance
 
     def _checkpoint_dofs(self):
         self._saved = self.y.copy()
@@ -266,10 +267,12 @@ class _ToyBoundaryState:
         self.y = self._saved.copy()
 
     def get_iterations(self):
-        return 0
+        return self.iterations
 
 
-def _toy_newton(monkeypatch, y_start, y_ref, stiffness, curvature, **fbp):
+def _toy_newton(
+    monkeypatch, y_start, y_ref, stiffness, curvature, maxIter=1000, totaliter=None, **fbp
+):
     """Run FreeBoundaryRun._run_newton on the residual g(y) = stiffness * e + curvature * e**2, e = y - y_ref, whose
     zero is the reference state. The quadratic term makes the finite-difference Jacobian (step 1e-4) of the
     soft mode stiff by 40 %, so the steps shrink geometrically while |g| is still far above zero."""
@@ -293,11 +296,12 @@ def _toy_newton(monkeypatch, y_start, y_ref, stiffness, curvature, **fbp):
 
     def move(pert, blend_depth, minimize_tol, maxIter):
         run.state.y = run.state._saved + pert  # relative to the checkpointed base state
+        run.state.solve(maxIter=maxIter)
         return True
 
     run._fb_residual = residual
     run._fb_move_and_solve = move
-    run._run_newton(100, 0.0, 1e-8, 1000, 8, -1.0)
+    run._run_newton(100, 0.0, 1e-8, maxIter, 8, -1.0, totaliter=totaliter)
     return run
 
 
@@ -315,6 +319,30 @@ def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     )  # stops on the step size, far from the reference
     assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
     assert fixed.gnorm < 1e-7
+
+
+def test_newton_respects_totaliter_budget(monkeypatch):
+    """The Newton path stops when the totalIter budget is used up (like the descent path), also within the
+    finite-difference Jacobian, and limits each interior solve to the iterations left."""
+    y_ref = np.array([0.30, -0.10, 0.02])
+    y_start = y_ref + np.array([1e-3, 0.0, 2e-3])
+    stiffness = np.array([2e4, 1e4, 50.0])
+    free = _toy_newton(monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10)
+    assert free.state.iterations > 25  # unlimited: base solve, Jacobian and steps
+    for budget in (0, 5, 25, 45):
+        run = _toy_newton(
+            monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10, totaliter=budget
+        )
+        assert run.state.iterations <= budget
+        # the boundary is left at the last accepted state, not in a half-finished trial
+        np.testing.assert_array_equal(run.state.y, run.state._saved)
+    # base solve (10), two full Jacobian columns (20) and the rest of the budget for the last one (5)
+    assert (
+        _toy_newton(
+            monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10, totaliter=35
+        ).state.iterations
+        == 35
+    )
 
 
 def test_saved_parameters_do_not_repeat_boundary_perturbation(tmp_path):

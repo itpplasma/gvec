@@ -451,6 +451,7 @@ class FreeBoundaryRun(AbstractRun):
                         maxIter=self._state_parameters["maxIter"],
                         digits_BIEST=digits_BIEST,
                         free_boundary_tolerance=free_boundary_tolerance,
+                        totaliter=self.totaliter,
                     )
                 for fb_update in range(1, fb_updates if method == "descent" else 0):
                     logger.info(
@@ -828,6 +829,7 @@ class FreeBoundaryRun(AbstractRun):
         maxIter: int,
         digits_BIEST: int,
         free_boundary_tolerance: float,
+        totaliter: int | None = None,
     ) -> int:
         """Newton iteration for the free boundary.
 
@@ -853,7 +855,9 @@ class FreeBoundaryRun(AbstractRun):
         Stops when the largest normal-mode amplitude of the step is below `newton_xtol` [m], when a step smaller
         than `newton_noise_step` [m] does not decrease |g| (noise floor), when |g| fell below `newton_rtol` times its
         initial value or below `newton_gtol`, when the free-boundary target is below the tolerance, or when the
-        update budget is used up. A small step or a failed line search is a step-size criterion only: a step in the
+        update budget or the `totaliter` budget of GVEC iterations (as counted by the state, like in the descent path)
+        is used up. The interior solves are limited to the iterations left; the iterations of the processes of
+        `newton_workers` > 1 are not counted. A small step or a failed line search is a step-size criterion only: a step in the
         stiff modes can be micrometres while |g| is still far above what the problem reaches. With `newton_gtol` > 0
         (absolute, in the units of |g|), a small step therefore does not stop the update while |g| > `newton_gtol`
         unless it was computed from a freshly built finite-difference Jacobian and did not reduce |g| by more than a
@@ -875,9 +879,24 @@ class FreeBoundaryRun(AbstractRun):
         rebuild_ratio = fbp.get("newton_rebuild_ratio", 0.5)
 
         self.newton_history = []
+
+        def iterations_left():
+            """maxIter for the next interior solve, None if the totaliter budget is used up."""
+            if totaliter is None:
+                return maxIter
+            left = totaliter - self.state.get_iterations()
+            return min(maxIter, left) if left > 0 else None
+
         # the finite differences need a converged base state
         self.state.reset_descent()
-        self.state.solve(logfinaliter=False, maxIter=maxIter, minimize_tol=minimize_tol)
+        maxIter_base = iterations_left()
+        if maxIter_base is None:
+            logger.warning(
+                "Maximum number of iterations reached! aborting Newton free-boundary iterations."
+            )
+            self.newton_jacobian = None
+            return 0
+        self.state.solve(logfinaliter=False, maxIter=maxIter_base, minimize_tol=minimize_tol)
         self.state._checkpoint_dofs()
         r, fields = self._fb_residual(digits_BIEST)
 
@@ -919,8 +938,11 @@ class FreeBoundaryRun(AbstractRun):
             else:
                 dR = np.zeros((r.size, k))
                 for j in range(k):
+                    if (maxIter_j := iterations_left()) is None:
+                        self.state._restore_dofs()
+                        return None
                     if not self._fb_move_and_solve(
-                        perts[:, j], blend_depth, minimize_tol, maxIter
+                        perts[:, j], blend_depth, minimize_tol, maxIter_j
                     ):
                         raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
                     dR[:, j] = self._fb_residual(digits_BIEST)[0] - r
@@ -956,27 +978,39 @@ class FreeBoundaryRun(AbstractRun):
             logger.info(
                 f"============= Newton free-boundary update {fb_update} / {fb_updates} ============="
             )
+            if iterations_left() is None:
+                logger.warning(
+                    "Maximum number of iterations reached! aborting Newton free-boundary iterations."
+                )
+                fb_update -= 1
+                break
             if J is None:
                 J = fd_jacobian()
                 jac_fresh = True
+            exhausted = J is None
             lam = lm
             accepted = False
-            for attempt in range(3):
+            for attempt in range(0 if exhausted else 3):
                 dy = lm_step(J, g, lam)
                 dmax = np.max(np.abs(dy) * ynorm)
                 if dmax > max_step:
                     dy *= max_step / dmax
                 alpha = 1.0
                 for _ in range(max_backtracks):
+                    if (maxIter_trial := iterations_left()) is None:
+                        exhausted = True
+                        break
                     sy = alpha * dy
-                    if self._fb_move_and_solve(P @ sy, blend_depth, minimize_tol, maxIter):
+                    if self._fb_move_and_solve(
+                        P @ sy, blend_depth, minimize_tol, maxIter_trial
+                    ):
                         r_new, fields_new = self._fb_residual(digits_BIEST)
                         g_new = P.T @ r_new
                         if np.linalg.norm(g_new) < (1.0 - 1e-4 * alpha) * np.linalg.norm(g):
                             accepted = True
                             break
                     alpha *= 0.5
-                if accepted:
+                if accepted or exhausted:
                     break
                 if np.max(np.abs(dy) * ynorm) < noise_step and jac_fresh:
                     logger.info(
@@ -991,6 +1025,9 @@ class FreeBoundaryRun(AbstractRun):
                     self.state._restore_dofs()
                     J = fd_jacobian()
                     jac_fresh = True
+                    if J is None:
+                        exhausted = True
+                        break
                 else:
                     lam = max(100.0 * lam, 1e-8)
                     logger.info(
@@ -998,7 +1035,11 @@ class FreeBoundaryRun(AbstractRun):
                     )
             if not accepted:
                 self.state._restore_dofs()
-                if np.max(np.abs(dy) * ynorm) >= noise_step:
+                if exhausted:
+                    logger.warning(
+                        "Maximum number of iterations reached! aborting Newton free-boundary iterations."
+                    )
+                elif np.max(np.abs(dy) * ynorm) >= noise_step:
                     logger.warning(
                         "Newton free boundary: no decrease of |g| along the step; stopping."
                     )
