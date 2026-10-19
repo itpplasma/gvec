@@ -424,3 +424,29 @@ def test_B2_exterior_counterclockwise_zeta(tmp_path):
     _, B_plas, _, _ = _get_B2_fp(st, CoilSet([loop]), nt, nz, i_tor, True, 8)
     circulation = (B_plas * e_theta).sum(axis=(0, 2)) * 2 * np.pi / nt
     np.testing.assert_allclose(circulation, mu_0 * i_tor, rtol=1e-3)
+
+
+def test_newton_parallel_fd_jacobian_matches_serial(tmp_path):
+    """The FD Jacobians of the Newton update computed by the worker pool (dynamically scheduled columns, workers kept
+    for the second Jacobian from a new base state) equal the serial ones, up to the interior tolerance."""
+    pytest.importorskip("fbtools")
+    runs = {}
+    for workers in (1, 2):
+        p = _params()
+        for q in ("X1", "X2", "LA"):
+            p[f"{q}_mn_max"] = [2, 0]
+        p["X1_b_cos"][(2, 0)] = 0.02
+        p["totalIter"] = 200000
+        p["minimize_tol"] = 1e-9
+        p["free_boundary"] = dict(
+            updates=4, tolerance=1e-14, method="newton", newton_workers=workers, newton_fd_step=1e-4,
+            newton_rtol=0.0, newton_xtol=0.0, newton_max_step=0.01, ramp_force_tol=False,
+        )
+        runs[workers] = gvec.run(p, runpath=tmp_path / f"w{workers}", coil_set=_axis_wire(2e6))
+    J1, J2 = runs[1]._newton_last_fd_jacobian, runs[2]._newton_last_fd_jacobian
+    assert J1.shape == J2.shape and J1.shape[0] >= 3
+    np.testing.assert_allclose(J2, J1, rtol=0, atol=1e-4 * np.abs(J1).max())
+    h1, h2 = runs[1].newton_history, runs[2].newton_history
+    assert len(h1) == len(h2) == 3
+    assert h2[-1]["jacobians"] == 2  # the second FD Jacobian reuses the worker pool from a new base state
+    np.testing.assert_allclose(h2[-1]["residual"], h1[-1]["residual"], rtol=1e-3)
