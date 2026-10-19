@@ -57,8 +57,8 @@
     - pwd
     - echo "Building on branch ${HASH_TAG} with ${CURR_CMP} in ${CMP_MODE} mode, OMP=${OMP_MODE:3} and MPI=${MPI_MODE:3}"
     - echo "CMAKE_HOSTNAME is ${CMAKE_HOSTNAME}"
-    - echo "is ${HASH_TAG} the same as ${CI_COMMIT_REF_NAME}?"
-    - if [ ${HASH_TAG} != ${CI_COMMIT_REF_NAME} ]; then git fetch --tags; git restore . ; git checkout ${HASH_TAG}; git pull; fi
+    - echo "is ${HASH_TAG} the same as ${CI_COMMIT_REF_SLUG}?"
+    - if [ "${HASH_TAG}" != "${CI_COMMIT_REF_SLUG}" ]; then git fetch --tags; git restore . ; git checkout ${HASH_TAG}; git pull; fi
     - git tag
     - echo "DRY-RUN OF THE FULL PYTEST CALL"
     - python --version
@@ -98,8 +98,8 @@
     - export SKBUILD_CMAKE_BUILD_TYPE=${CMP_MODE}
     - export SKBUILD_CMAKE_DEFINE="USE_OPENMP=${OMP_MODE:3};USE_MPI=${MPI_MODE:3}"
     - echo "CMAKE_HOSTNAME is ${CMAKE_HOSTNAME}"
-    - echo "is ${HASH_TAG} the same as ${CI_COMMIT_REF_NAME}?"
-    - if [ ${HASH_TAG} != ${CI_COMMIT_REF_NAME} ]; then git fetch --tags; git restore . ; git checkout ${HASH_TAG}; fi
+    - echo "is ${HASH_TAG} the same as ${CI_COMMIT_REF_SLUG}?"
+    - if [ "${HASH_TAG}" != "${CI_COMMIT_REF_SLUG}" ]; then git fetch --tags; git restore . ; git checkout ${HASH_TAG}; fi
     - git tag
     - python --version
     - echo "BUILDNAME is ${BUILDNAME}"

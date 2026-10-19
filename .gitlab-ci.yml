@@ -38,7 +38,7 @@ workflow:
 
 variables:
   GIT_STRATEGY: clone
-  HASH_TAG: $CI_COMMIT_REF_NAME
+  HASH_TAG: $CI_COMMIT_REF_SLUG   # slug: used in paths/artifact names (branch names may contain "/"); the git ref itself is CI_COMMIT_REF_NAME
   HASH_TAG_REFERENCE:
     value: develop
     description: "The reference branch/tag to compare against"
