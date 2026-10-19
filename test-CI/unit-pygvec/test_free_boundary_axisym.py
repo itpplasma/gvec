@@ -44,8 +44,9 @@ def _axis_wire(current, length=1e4, nret=4):
 
 
 @pytest.fixture
-def state():
+def state(tmp_path, monkeypatch):
     # function scope: pygvec holds one global Fortran state, which any other State.new or run in this module replaces
+    monkeypatch.chdir(tmp_path)  # State.new writes parameter.ini to the working directory
     return gvec.State.new(_params())
 
 
@@ -563,7 +564,8 @@ def test_B2_exterior_counterclockwise_zeta(tmp_path):
     p.update(which_hmap=21, hmap_ncfile=str(tmp_path / "ccw-Gframe.nc"))
     p["X1_b_cos"] = {(1, 0): A0}
     p["X1_a_cos"] = {(0, 0): 0.0}
-    st = gvec.State.new(p)
+    with gvec.util.chdir(tmp_path):  # State.new writes parameter.ini to the working directory
+        st = gvec.State.new(p)
     assert not st.clockwise_zeta
 
     nt, nz = st.get_integration_points()[2], st.get_integration_points()[4]

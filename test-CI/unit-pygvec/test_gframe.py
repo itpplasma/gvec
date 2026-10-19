@@ -315,20 +315,23 @@ def test_gframe_surface_volume(ntheta, nzeta):
     )
 
 
-def test_gframe_surface_orientation():
+def test_gframe_surface_orientation(tmp_path):
     """Test the construction from surface for a tilted elliptic torus, and check that it raises a ValueError for the mirrored surface."""
     xyz_tilt = tilted_elliptic_torus(ntheta=41, nzeta=81)
-    # this should work without error:
-    params, dict_out = gframe.construct_gframe_from_surface(
-        xyz_tilt, nfp=1, name="test_tilted_elliptic_torus"
-    )
-    # now mirror the surface and check that it raises a ValueError due to negative volume:
-    xyz_mirror = xyz_tilt.copy()
-    xyz_mirror[:, :, 2] = -xyz_mirror[:, :, 2]
-    with pytest.raises(ValueError, match="negative volume"):
+    # the construction writes <name>-Gframe.nc and <name>-parameters.yaml to the working directory
+    with gvec.util.chdir(tmp_path):
+        # this should work without error:
         params, dict_out = gframe.construct_gframe_from_surface(
-            xyz_mirror, nfp=1, name="test_tilted_elliptic_torus_mirror"
+            xyz_tilt, nfp=1, name="test_tilted_elliptic_torus"
         )
+        # now mirror the surface and check that it raises a ValueError due to negative volume:
+        xyz_mirror = xyz_tilt.copy()
+        xyz_mirror[:, :, 2] = -xyz_mirror[:, :, 2]
+        with pytest.raises(ValueError, match="negative volume"):
+            params, dict_out = gframe.construct_gframe_from_surface(
+                xyz_mirror, nfp=1, name="test_tilted_elliptic_torus_mirror"
+            )
+    assert (tmp_path / "test_tilted_elliptic_torus-Gframe.nc").exists()
 
 
 @pytest.mark.parametrize(
