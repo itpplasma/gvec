@@ -525,21 +525,14 @@ class FreeBoundaryRun(AbstractRun):
                         # Step-size dt is reduced if the moving average of the target increases until the minimum step-size is reached,
                         # otherwise it is increased. However, some algorithms such as BFGS also perform step-size estimations, which overwrite
                         # the provided step-size, if the estimated step-size is SMALLER.
-                        if (
-                            self.target_mavg_last < self.target_mavg or dt < min_dt
-                        ) and step_size_heuristic:
-                            dt = max(0.5 * dt, min_dt)
-                        elif step_size_heuristic:
-                            dt = min(1.1 * dt, max_dt)
-
-                        # this is relevant to whipe the memory of methods like BFGS and aGD
-                        if dt <= min_dt and reset_minimizer and step_size_heuristic:
-                            reset_minimizer = True
-                            logger.warning(
-                                "Reached minimum step-size! Resetting free boundary minimizer."
+                        if step_size_heuristic:
+                            dt, reset_minimizer = _descent_step_size(
+                                dt, self.target_mavg_last, self.target_mavg, min_dt, max_dt
                             )
-                        elif step_size_heuristic:
-                            reset_minimizer = False
+                            if reset_minimizer:
+                                logger.warning(
+                                    "Reached minimum step-size! Resetting free boundary minimizer."
+                                )
 
                         logger.info(f"Free boundary dt: {dt:.2e}")
 
@@ -1172,6 +1165,17 @@ class FreeBoundaryRun(AbstractRun):
         )
         axs[1].legend()
         return (fig, axs)
+
+
+def _descent_step_size(dt, target_mavg_last, target_mavg, min_dt, max_dt):
+    """Step-size heuristic of the descent update: halve dt (down to min_dt) when the moving-average target
+    increased, else grow it by 10 % (up to max_dt). Returns (dt, reset_minimizer); the free-boundary minimizer is
+    reset (its memory, e.g. the mGD momentum or the lBFGS pairs, is wiped) when dt is held at min_dt."""
+    if target_mavg_last < target_mavg or dt < min_dt:
+        dt = max(0.5 * dt, min_dt)
+    else:
+        dt = min(1.1 * dt, max_dt)
+    return dt, dt <= min_dt
 
 
 # ============= NEWTON HELPERS ===========================

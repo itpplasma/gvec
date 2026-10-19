@@ -317,3 +317,25 @@ def test_free_boundary_stage_does_not_inherit_convergence_norms(tmp_path):
     # entry 0 of each stage is the state before its first update
     entries = [np.isfinite(run.diagnostics_stage[s].to_dataset().free_boundary_target.values).sum() for s in stages]
     assert entries == [2, 2]
+
+
+def test_free_boundary_descent_resets_minimizer_at_min_dt(tmp_path, monkeypatch):
+    """When the step-size heuristic holds dt at min_dt, the free-boundary minimizer is reset."""
+    pytest.importorskip("fbtools")
+    from gvec.core.minimize import MinimizationState
+
+    calls = []
+    update = MinimizationState._free_boundary_update
+
+    def record(self, *args, **kwargs):
+        calls.append((kwargs["dt"], kwargs["reset_minimizer"]))
+        return update(self, *args, **kwargs)
+
+    monkeypatch.setattr(MinimizationState, "_free_boundary_update", record)
+    p = _params()
+    p["totalIter"] = 20000
+    p["minimize_tol"] = 1e-5
+    # initial dt below min_dt: the first update is taken at dt = min_dt
+    p["free_boundary"] = dict(updates=2, tolerance=1e-12, dt=1e-4, min_dt=2e-4, force_ratio_limit=0.0, gtol=0.0)
+    gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    assert calls[0] == (pytest.approx(2e-4), True)
