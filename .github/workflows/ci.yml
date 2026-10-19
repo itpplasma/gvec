@@ -1,0 +1,179 @@
+# Lean GitHub Actions CI for the itpplasma/gvec fork.
+# Mirrors the essentials of the upstream GitLab CI (.gitlab-ci.yml, CI_templates/):
+# ubuntu-24 package set (CI_images/ubuntu-24), CMake presets, ctest, pytest -m unit.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MPLBACKEND: Agg
+  PYTHON_VERSION: "3.12" # Ubuntu 24.04 system python, as in CI_images/ubuntu-24
+  # fbtools revision used for free-boundary GVEC (BIEST submodule is fetched by pip)
+  FBTOOLS_REV: 14a5c4a7c3ff7458780edf7ebb0bd76712b44fbf
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/cache@v4.2.3
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: python -m pip install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  fortran:
+    name: fortran (${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - gvec_config_release # Release + OpenMP
+          - gvec_config_debug # Debug + OpenMP
+          - gvec_config_no-omp_release
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          # packages from CI_images/ubuntu-24 (gcc/gfortran 13) plus ninja/ccache
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build ccache pkg-config gfortran g++ git liblapack-dev libblas-dev zlib1g-dev libnetcdf-dev libnetcdff-dev
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Python test dependencies (used by the registered ctest tests)
+        run: |
+          python -m pip install pytest numpy pyyaml f90nml netcdf4 xarray scipy \
+            matplotlib tabulate tomlkit tqdm pyevtk requests f90wrap
+      - uses: hendrikmuhs/ccache-action@v1.2.18
+        with:
+          key: fortran-${{ matrix.preset }}
+      - name: Configure
+        run: >-
+          cmake --preset ${{ matrix.preset }} -B build -G Ninja
+          -DPython_EXECUTABLE="$(which python)"
+          -DCMAKE_Fortran_COMPILER_LAUNCHER=ccache
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test (registered ctest tests)
+        # the tests share ctest_run/ctest_post directories, so run them serially
+        run: ctest --test-dir build --output-on-failure --no-tests=error
+
+  python:
+    name: python (${{ matrix.build_type }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0 # setuptools_scm needs tags
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          # packages from CI_images/ubuntu-24 (gcc/gfortran 13) plus ninja/ccache
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build ccache pkg-config gfortran g++ git liblapack-dev libblas-dev zlib1g-dev libnetcdf-dev libnetcdff-dev
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: hendrikmuhs/ccache-action@v1.2.18
+        with:
+          key: python-${{ matrix.build_type }}
+      - name: Build wheel (scikit-build-core, as upstream .script_build_py)
+        env:
+          SKBUILD_CMAKE_BUILD_TYPE: ${{ matrix.build_type }}
+          SKBUILD_CMAKE_DEFINE: USE_OPENMP=On;USE_MPI=Off
+          CMAKE_Fortran_COMPILER_LAUNCHER: ccache
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+        run: |
+          python -m pip install build
+          python -m build --wheel
+          ls dist/
+      - name: Install wheel
+        run: |
+          python -m pip install dist/*.whl pytest
+          pygvec --version
+      - name: Unit tests (upstream .script_unit)
+        run: python -m pytest -m unit -v -rA --require-pygvec --junitxml=pytest.xml
+
+  free-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          # packages from CI_images/ubuntu-24 (gcc/gfortran 13) plus ninja/ccache
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build ccache pkg-config gfortran g++ git liblapack-dev libblas-dev zlib1g-dev libnetcdf-dev libnetcdff-dev libfftw3-dev
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: hendrikmuhs/ccache-action@v1.2.18
+        with:
+          key: free-boundary
+      - name: Install fbtools and GVEC (no build isolation)
+        env:
+          CMAKE_Fortran_COMPILER_LAUNCHER: ccache
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          python -m pip install scikit-build-core setuptools_scm numpy f90wrap \
+            pytest cmake ninja pybind11
+          # pip fetches the BIEST/SCTL submodules of fbtools recursively
+          python -m pip install --no-build-isolation \
+            "fbtools @ git+https://gitlab.mpcdf.mpg.de/nmpp-mhd-group/fhindenlang/fbtools.git@${FBTOOLS_REV}"
+          # use the free_boundary extra once the branch defines it
+          if grep -q '^free_boundary *=' pyproject.toml; then spec='.[free_boundary]'; else spec='.'; fi
+          python -m pip install --no-build-isolation "$spec"
+      - name: Import check
+        run: python -c "import fbtools, gvec; print('fbtools', fbtools.__file__); print('gvec', gvec.__version__)"
+      - name: Free-boundary tests
+        run: |
+          set -euo pipefail
+          # free-boundary tests are recognised by marker or by file name
+          marked=$(grep -rlE 'mark\.(free_boundary|freeboundary)' test-CI || true)
+          files=$(find test-CI -type f -name 'test_*.py' -ipath '*free*boundary*' | sort)
+          if [ -n "$marked" ]; then
+            echo "Marked free-boundary tests in:"; echo "$marked"
+            # no `|| true`: failures and "no tests collected" (exit 5) fail the job
+            python -m pytest -v -rA --tb=short --require-pygvec \
+              -m "free_boundary or freeboundary" test-CI
+          elif [ -n "$files" ]; then
+            echo "Free-boundary test files:"; echo "$files"
+            mapfile -t files_arr <<< "$files"
+              python -m pytest -v -rA --tb=short --require-pygvec "${files_arr[@]}"
+          else
+            echo "::notice::No free-boundary tests on this branch; only the import check ran."
+          fi
