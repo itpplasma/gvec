@@ -87,6 +87,9 @@ jobs:
       fail-fast: false
       matrix:
         build_type: [Release, Debug]
+    env:
+      # job-wide like upstream's exported variable: test_build_type compares it with the built library
+      SKBUILD_CMAKE_BUILD_TYPE: ${{ matrix.build_type }}
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -107,7 +110,6 @@ jobs:
           key: python-${{ matrix.build_type }}
       - name: Build wheel (scikit-build-core, as upstream .script_build_py)
         env:
-          SKBUILD_CMAKE_BUILD_TYPE: ${{ matrix.build_type }}
           SKBUILD_CMAKE_DEFINE: USE_OPENMP=On;USE_MPI=Off
           CMAKE_Fortran_COMPILER_LAUNCHER: ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
