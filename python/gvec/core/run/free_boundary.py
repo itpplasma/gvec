@@ -1264,6 +1264,8 @@ class _FDWorkerPool:
         todo = list(range(k))
         sel = selectors.DefaultSelector()
         busy = 0
+        stats = []  # (worker, base seconds, column seconds, column iterations)
+        t0 = time.time()
         for i in range(len(self.procs)):
             self._send(i, ("base", str(statefile)))
             if todo:
@@ -1281,8 +1283,9 @@ class _FDWorkerPool:
                         msg = ("error", f"worker {i} exited (code {self.procs[i].wait()})")
                     if msg[0] == "error":
                         raise RuntimeError(f"Newton FD worker {i} failed: {msg[1]}; see {self.root}/worker_*/worker.log")
-                    _, j, col = msg
+                    _, j, col, info = msg
                     dR[:, j] = col
+                    stats.append((i, *info))
                     if todo:
                         j = todo.pop(0)
                         self._send(i, ("col", j, perts[:, j]))
@@ -1291,6 +1294,14 @@ class _FDWorkerPool:
                         busy -= 1
         finally:
             sel.close()
+        tb = [st[1] for st in stats if st[1] is not None]
+        tc = np.array([st[2] for st in stats])
+        it = np.array([st[3] for st in stats])
+        logger.info(
+            f"FD worker pool: {k} columns on {len(self.procs)} workers in {time.time() - t0:.1f}s; base restart max "
+            f"{max(tb, default=0.0):.1f}s; column min/mean/max {tc.min():.1f}/{tc.mean():.1f}/{tc.max():.1f}s, "
+            f"iterations min/mean/max {it.min()}/{it.mean():.0f}/{it.max()}"
+        )
         return dR
 
     def close(self):
@@ -1314,7 +1325,8 @@ class _FDWorkerPool:
 def _fd_worker_main():
     """Entry point of a Newton FD worker process: argv = task.pkl, worker directory, command fd, result fd.
     Commands: ("base", statefile) restarts from the statefile, re-solves (to minimize_tol) and evaluates the base
-    residual; ("col", j, pert) returns ("col", j, residual(base + pert) - base residual); ("stop",) exits."""
+    residual; ("col", j, pert) returns ("col", j, residual(base + pert) - base residual, (base restart seconds or
+    None, column seconds, column iterations)); ("stop",) exits."""
     import os
     import pickle
     import sys
@@ -1341,18 +1353,23 @@ def _fd_worker_main():
                 state = MinimizationState.new(
                     params, rundir=rundir, statefile=msg[1], redirect_stdout=True, stdout_path=rundir / "stdout.txt"
                 )
+                t_base = time.time()
                 with chdir(rundir):
                     state.reset_descent()
                     state.solve(logfinaliter=False, maxIter=maxIter, minimize_tol=minimize_tol)
                     state._checkpoint_dofs()
                     r0 = _boundary_residual(state, coil_set, digits)[0]
+                t_base = time.time() - t_base
             elif msg[0] == "col":
                 _, j, pert = msg
+                t_col, it0 = time.time(), state.get_iterations()
                 with chdir(state.rundir):
                     if not _move_and_solve(state, pert, blend_depth, minimize_tol, maxIter):
                         raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
                     col = _boundary_residual(state, coil_set, digits)[0] - r0
-                pickle.dump(("col", j, col), out)
+                info = (t_base, time.time() - t_col, state.get_iterations() - it0)
+                t_base = None  # reported with the first column after a base restart
+                pickle.dump(("col", j, col, info), out)
                 out.flush()
     except Exception:
         traceback.print_exc()
