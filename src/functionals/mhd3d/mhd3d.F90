@@ -710,12 +710,13 @@ SUBROUTINE InitSolutionMHD3D(sf, RestartFile_in, do_WriteState_in)
   USE MODgvec_MHD3D_EvalFunc , ONLY: InitProfilesGP,EvalEnergy,EvalForce
   USE MODgvec_Analyze        , ONLY: Analyze
   USE MODgvec_ReadInTools    , ONLY: GETLOGICAL
+  USE MODgvec_Globals        , ONLY: MAXLEN
   USE MODgvec_MPI            , ONLY: par_Bcast,par_barrier
   IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT VARIABLES
   CLASS(t_functional_mhd3d), INTENT(INOUT) :: sf
-  CHARACTER(LEN=255), INTENT(IN), OPTIONAL :: RestartFile_in ! for restart from State
+  CHARACTER(LEN=*  ), INTENT(IN), OPTIONAL :: RestartFile_in ! for restart from State
   LOGICAL,            INTENT(IN), OPTIONAL :: do_WriteState_in
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! OUTPUT VARIABLES
@@ -723,7 +724,7 @@ SUBROUTINE InitSolutionMHD3D(sf, RestartFile_in, do_WriteState_in)
 ! LOCAL VARIABLES
   INTEGER              :: JacCheck
   LOGICAL              :: doRestart_local, do_WriteState
-  CHARACTER(LEN=255)   :: RestartFile_local
+  CHARACTER(LEN=MAXLEN)   :: RestartFile_local
 !===================================================================================================================================
   CALL par_barrier(beforeScreenOut="    INITIALIZE SOLUTION...",afterScreenOut="                           ...")
   CALL enter_subregion("init-solution")

@@ -78,7 +78,7 @@ END SUBROUTINE Init
 SUBROUTINE InitSolution(RestartFile_in, do_WriteState_in)
   ! MODULES
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
-  CHARACTER(LEN=255), INTENT(IN), OPTIONAL  :: RestartFile_in
+  CHARACTER(LEN=*), INTENT(IN), OPTIONAL  :: RestartFile_in
   LOGICAL,            INTENT(IN), OPTIONAL  :: do_WriteState_in
   ! LOCAL VARIABLES -------------------------------------------------------------------------------------------------------------!
   ! CODE ------------------------------------------------------------------------------------------------------------------------!
