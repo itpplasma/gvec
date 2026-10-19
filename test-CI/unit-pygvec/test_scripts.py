@@ -168,6 +168,23 @@ def test_run_stages(suffix):
     assert Path(f"parameter_W7X_{suffix}_final.ini").exists()
 
 
+def test_run_stages_accepts_long_restart_paths(tmp_path, util):
+    """Restart state paths longer than 255 characters remain usable."""
+    parameters = gvec.util.read_parameters("parameter.toml")
+    parameters["projectname"] = "LongPath"
+    parameters["maxIter"] = 1
+    parameters["totalIter"] = 1
+    run_dir = tmp_path / ("gvec-long-" + "x" * 120) / ("restart-" + "y" * 120)
+    run_dir.mkdir(parents=True)
+
+    with util.chdir(run_dir):
+        run_with_stages = gvec.run(parameters, keep_intermediates="all")
+
+    assert run_with_stages.state.statefile is not None
+    assert len(str(run_with_stages.state.statefile)) > 255
+    assert run_with_stages.state.statefile.exists()
+
+
 def test_picard_auto():
     """
     Test the if the picard_current auto mode achieves "zero" current

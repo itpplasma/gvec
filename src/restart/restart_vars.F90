@@ -12,13 +12,13 @@
 !===================================================================================================================================
 MODULE MODgvec_Restart_Vars
 ! MODULES
-USE MODgvec_Globals,ONLY:wp
+USE MODgvec_Globals,ONLY:wp,MAXLEN
 IMPLICIT NONE
 PUBLIC
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! GLOBAL VARIABLES
 LOGICAL             :: doRestart          !! true if second command line argument exists
-CHARACTER(LEN=255)  :: RestartFile        !! Name of Restart files (second command line argument)
+CHARACTER(LEN=MAXLEN)  :: RestartFile        !! Name of Restart files (second command line argument)
 
 !===================================================================================================================================
 END MODULE MODgvec_Restart_Vars
