@@ -764,7 +764,7 @@ class MinimizationState(State):
     @with_binding
     def update_boundary(self, dt: float, reset_minimizer: bool, blend_depth: float = 0.6):
         logger.debug("Stepping in free boundary direction")
-        _state.update_boundary(dt, reset_minimizer, blend_depth=blend_depth)
+        return _state.update_boundary(dt, reset_minimizer, blend_depth=blend_depth)
 
     def _free_boundary_target(self, B_ext_2: np.ndarray):
         """Evaluate the free-boundary target function based on the force-balance.

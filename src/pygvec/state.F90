@@ -151,6 +151,7 @@ END SUBROUTINE set_Bext_squared
 !===================================================================================================================================
 FUNCTION update_boundary(dt, reset_minimizer, blend_depth) RESULT(dt_out)
   ! MODULES
+  USE MODgvec_MHD3D_Vars, ONLY: free_b_minimizer
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
   REAL(wp), INTENT(IN)  :: dt
   LOGICAL, INTENT(IN)      ::reset_minimizer
@@ -159,6 +160,8 @@ FUNCTION update_boundary(dt, reset_minimizer, blend_depth) RESULT(dt_out)
   ! LOCAL VARIABLES -------------------------------------------------------------------------------------------------------------!
   ! CODE ------------------------------------------------------------------------------------------------------------------------!
   CALL functional%update_boundary(dt, reset_minimizer, blend_depth_in=blend_depth)
+  ! the step-size actually used, after possible reductions for an invalid (detJ<=0) boundary push
+  dt_out = free_b_minimizer%dt
 END FUNCTION update_boundary
 
 FUNCTION get_iterations() RESULT(iters)

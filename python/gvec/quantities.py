@@ -1894,7 +1894,9 @@ def I_pol(ds: xr.Dataset, state: State):
     ),
 )
 def W_MHD(ds: xr.Dataset):
-    ds["W_MHD"] = volume_integral((0.5 * ds.mod_B**2 + (ds.gamma - 1) * ds.mu0 * ds.p) * ds.Jac)
+    # same normalisation as EvalEnergy (mhd3d_evalfunc.F90): int (|B|^2 / 2 + mu0 p / (gamma - 1)) dV,
+    # i.e. mu0 * (magnetic energy + p / (gamma - 1)); for the fixed pressure of gvec (gamma = 0) the term is -mu0 p
+    ds["W_MHD"] = volume_integral((0.5 * ds.mod_B**2 + ds.mu0 * ds.p / (ds.gamma - 1)) * ds.Jac)
 
 
 @register(

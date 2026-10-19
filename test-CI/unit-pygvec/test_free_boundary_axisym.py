@@ -44,8 +44,9 @@ def _axis_wire(current, length=1e4, nret=4):
 
 
 @pytest.fixture
-def state():
+def state(tmp_path, monkeypatch):
     # function scope: pygvec holds one global Fortran state, which any other State.new or run in this module replaces
+    monkeypatch.chdir(tmp_path)  # State.new writes parameter.ini to the working directory
     return gvec.State.new(_params())
 
 
@@ -98,6 +99,26 @@ def test_free_boundary_run_axisymmetric(tmp_path):
     assert np.isfinite(run.state.evaluate("X1", rho=1.0, theta=0.0, zeta=0.0).X1.values).all()
 
 
+def test_free_boundary_resolution_proposal_after_newton_stalls_at_update_0(tmp_path):
+    """Newton that makes no step leaves only update 0 in the diagnostics; the resolution proposal at the end of
+    the stage must use that column, not the (still NaN) last one."""
+    pytest.importorskip("fbtools")
+    p = _params()
+    p["totalIter"] = 2000
+    p["minimize_tol"] = 1e-5
+    p["free_boundary"] = dict(
+        updates=4,
+        tolerance=1e-12,
+        method="newton",
+        newton_max_backtracks=0,  # no trial step is ever accepted
+        force_ratio_limit=2.0,  # > 1: always ask for the resolution proposal
+    )
+    run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    fb = run.diagnostics_stage["stage_1"].force_balance
+    assert fb.isel(updates=0).notnull().all()
+    assert fb.isel(updates=-1).isnull().all()
+
+
 def _minimization_state(tmp_path, mn_max=1):
     from gvec.core.minimize import MinimizationState
 
@@ -126,6 +147,17 @@ def test_boundary_perturbation_and_checkpoint(tmp_path):
     np.testing.assert_allclose(R1_edge - R0_edge, 0.01, atol=1e-12)
     state._restore_dofs()
     np.testing.assert_array_equal(state._get_boundary_dofs(), x0)
+
+
+def test_update_boundary_returns_the_used_stepsize(tmp_path):
+    """pygvec's update_boundary returns the free-boundary step-size (it used to return an undefined value)."""
+    state = _minimization_state(tmp_path)
+    state.set_Bext_squared(np.full(state.t_n * state.z_n, 0.3))
+    state.reset_descent()
+    dt = 3e-3
+    dt_out = state.update_boundary(dt, True)
+    assert dt_out == pytest.approx(state.dt_free, rel=0, abs=0)
+    assert 0.0 < dt_out <= dt
 
 
 def test_normal_displacement_basis_circle(tmp_path):
@@ -252,12 +284,13 @@ class _ToyBoundaryState:
     def __init__(self, y):
         self.y = y
         self._saved = y.copy()
+        self.iterations = 0
 
     def reset_descent(self):
         pass
 
     def solve(self, **kwargs):
-        pass
+        self.iterations += kwargs["maxIter"]  # worst case: every solve uses its whole allowance
 
     def _checkpoint_dofs(self):
         self._saved = self.y.copy()
@@ -266,10 +299,21 @@ class _ToyBoundaryState:
         self.y = self._saved.copy()
 
     def get_iterations(self):
-        return 0
+        return self.iterations
 
 
-def _toy_newton(monkeypatch, y_start, y_ref, stiffness, curvature, **fbp):
+def _toy_newton(
+    monkeypatch,
+    y_start,
+    y_ref,
+    stiffness,
+    curvature,
+    maxIter=1000,
+    totaliter=None,
+    basis=None,
+    residual=None,
+    **fbp,
+):
     """Run FreeBoundaryRun._run_newton on the residual g(y) = stiffness * e + curvature * e**2, e = y - y_ref, whose
     zero is the reference state. The quadratic term makes the finite-difference Jacobian (step 1e-4) of the
     soft mode stiff by 40 %, so the steps shrink geometrically while |g| is still far above zero."""
@@ -285,19 +329,26 @@ def _toy_newton(monkeypatch, y_start, y_ref, stiffness, curvature, **fbp):
     }
     run.free_boundary_target = 1.0
     run._update_diagnostics = lambda *args: None
-    monkeypatch.setattr(fb, "_normal_displacement_basis", lambda state: (np.eye(k), np.ones(k)))
+    if basis is None:
+        basis = lambda y: np.eye(k)  # noqa: E731
+    monkeypatch.setattr(
+        fb, "_normal_displacement_basis", lambda state: (basis(state.y), np.ones(k))
+    )
 
-    def residual(digits):
+    def toy_residual(digits):
         e = run.state.y - y_ref
+        if residual is not None:
+            return residual(run.state.y), ()
         return stiffness * e + curvature * e**2, ()
 
     def move(pert, blend_depth, minimize_tol, maxIter):
         run.state.y = run.state._saved + pert  # relative to the checkpointed base state
+        run.state.solve(maxIter=maxIter)
         return True
 
-    run._fb_residual = residual
+    run._fb_residual = toy_residual
     run._fb_move_and_solve = move
-    run._run_newton(100, 0.0, 1e-8, 1000, 8, -1.0)
+    run._run_newton(100, 0.0, 1e-8, maxIter, 8, -1.0, totaliter=totaliter)
     return run
 
 
@@ -315,6 +366,78 @@ def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     )  # stops on the step size, far from the reference
     assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
     assert fixed.gnorm < 1e-7
+
+
+def test_newton_respects_totaliter_budget(monkeypatch):
+    """The Newton path stops when the totalIter budget is used up (like the descent path), also within the
+    finite-difference Jacobian, and limits each interior solve to the iterations left."""
+    y_ref = np.array([0.30, -0.10, 0.02])
+    y_start = y_ref + np.array([1e-3, 0.0, 2e-3])
+    stiffness = np.array([2e4, 1e4, 50.0])
+    free = _toy_newton(monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10)
+    assert free.state.iterations > 25  # unlimited: base solve, Jacobian and steps
+    for budget in (0, 5, 25, 45):
+        run = _toy_newton(
+            monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10, totaliter=budget
+        )
+        assert run.state.iterations <= budget
+        # the boundary is left at the last accepted state, not in a half-finished trial
+        np.testing.assert_array_equal(run.state.y, run.state._saved)
+    # base solve (10), two full Jacobian columns (20) and the rest of the budget for the last one (5)
+    assert (
+        _toy_newton(
+            monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10, totaliter=35
+        ).state.iterations
+        == 35
+    )
+
+
+def test_newton_jacobian_follows_the_moving_basis(monkeypatch):
+    """The normal-displacement basis is rebuilt from the current boundary after every step, so the Broyden
+    Jacobian must be expressed in the new basis. Linear force K (y - y_ref) with a basis that rotates with the
+    boundary: the Jacobian handed back is P^T K P for the final basis, not for the initial one."""
+    rng = np.random.default_rng(3)
+    Q = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+    K = Q.T @ np.diag([2e4, 1e3, 50.0]) @ Q
+    y_ref = np.array([0.30, -0.10, 0.02])
+    y_start = y_ref + np.array([0.01, -0.02, 0.015])
+
+    def basis(y):  # rotation about the first axis by an angle that depends on the boundary
+        c, s = np.cos(15 * y[1]), np.sin(15 * y[1])
+        return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+    run = _toy_newton(
+        monkeypatch,
+        y_start,
+        y_ref,
+        None,
+        None,
+        basis=basis,
+        residual=lambda y: K @ (y - y_ref),
+        newton_xtol=0.0,
+        newton_rtol=1e-6,
+        newton_noise_step=0.0,
+    )
+    P0, P1 = basis(y_start), basis(run.state.y)
+    assert np.abs(P1 - P0).max() > 0.1  # the basis really moved
+    J = run.newton_jacobian
+    np.testing.assert_allclose(J, P1.T @ K @ P1, rtol=1e-6, atol=1e-6 * np.abs(K).max())
+    assert np.linalg.norm(run.state.y - y_ref) < 1e-6
+
+
+def test_change_jacobian_basis_rectangular():
+    """For P with more rows than columns the new Jacobian is the one of the restriction to span(P_old)."""
+    from gvec.core.run.free_boundary import _change_jacobian_basis
+
+    rng = np.random.default_rng(1)
+    P_old = np.linalg.qr(rng.normal(size=(5, 3)))[0]
+    A = rng.normal(size=(5, 5))
+    R = A.T @ A
+    J = P_old.T @ R @ P_old
+    P_new = P_old @ np.linalg.qr(rng.normal(size=(3, 3)))[0]  # same span, rotated
+    np.testing.assert_allclose(
+        _change_jacobian_basis(J, P_old, P_new), P_new.T @ R @ P_new, atol=1e-10
+    )
 
 
 def test_saved_parameters_do_not_repeat_boundary_perturbation(tmp_path):
@@ -441,7 +564,8 @@ def test_B2_exterior_counterclockwise_zeta(tmp_path):
     p.update(which_hmap=21, hmap_ncfile=str(tmp_path / "ccw-Gframe.nc"))
     p["X1_b_cos"] = {(1, 0): A0}
     p["X1_a_cos"] = {(0, 0): 0.0}
-    st = gvec.State.new(p)
+    with gvec.util.chdir(tmp_path):  # State.new writes parameter.ini to the working directory
+        st = gvec.State.new(p)
     assert not st.clockwise_zeta
 
     nt, nz = st.get_integration_points()[2], st.get_integration_points()[4]
