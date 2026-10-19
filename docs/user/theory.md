@@ -499,6 +499,39 @@ Recalling the mapping $f:(\rho,\thet,\zeta)\mapsto(x,y,z)$, and introducing the 
 \end{aligned}
 \end{equation}
 
+##  Transformation to Hamada coordinates
+```{versionadded} 1.6
+```
+
+Hamada coordinates {cite}`Hamada_1962`, {cite}`haeseleer`, {cite}`Helander_2014` are straight-field line coordinates with a Jacobian $\Jac_H$ that is constant on each flux surface.
+In an exact MHD equilibrium, not only the field lines but also the current lines are straight in Hamada coordinates.
+GVEC constructs the angles from the condition of a constant Jacobian, so for a numerical equilibrium the current lines are straight only up to its force balance residual.
+As for the Boozer angles, they are defined with a periodic potential $\nu_H$
+\begin{equation}
+ \thet^\star_H = \thet + \lambda(\rho,\thet,\zeta) + \iota(\rho)\nu_H(\rho,\thet,\zeta)\,,\qquad \zeta^\star_H = \zeta + \nu_H(\rho,\thet,\zeta)\,.
+\end{equation}
+The Jacobian determinant of the angle transformation is linear in $\nu_H$,
+\begin{equation}
+ \frac{\Jac}{\Jac_H} = (1+\lambda_{,\thet})(1+\nu_{H,\zeta}) + (\iota-\lambda_{,\zeta})\,\nu_{H,\thet}\,,
+\end{equation}
+and since $\nu_H$ is periodic, integrating over the flux surface gives the constant
+$\Jac_H = \langle\Jac\rangle = \frac{1}{4\pi^2}\int_0^{2\pi}\int_0^{2\pi}\Jac\,d\thet d\zeta = \frac{1}{4\pi^2}\frac{dV}{d\rho}$.
+In PEST angles $\thet_P=\thet+\lambda$, the condition $\Jac_H=\langle\Jac\rangle$ is the magnetic differential equation
+\begin{equation}
+ \left(\iota\pdv{}{\thet_P}+\pdv{}{\zeta}\right)\nu_H = \frac{\Jac_P}{\langle\Jac\rangle} - 1\,,\qquad \Jac_P = \frac{\Jac}{1+\lambda_{,\thet}}\,,
+\end{equation}
+which is diagonal in a Fourier series $\nu_H=\mathrm{Re}\sum_{mn}\hat\nu_{mn}e^{i(m\thet_P-n N_{FP}\zeta)}$ (summing over $m>0$ and $m=0,n>0$), with $\hat\nu_{mn} = \hat f_{mn}/(i(\iota m-nN_{FP}))$.
+Since $d\thet_P=(1+\lambda_{,\thet})d\thet$, the Fourier coefficients of the right hand side are computed by quadrature on the GVEC angles, without inverting the PEST transform
+\begin{equation}
+ \hat f_{mn} = \frac{1}{2\pi^2}\int_0^{2\pi}\int_0^{2\pi} \left(\frac{\Jac}{\langle\Jac\rangle}-(1+\lambda_{,\thet})\right) e^{-i(m(\thet+\lambda)-nN_{FP}\zeta)}\,d\thet d\zeta\,.
+\end{equation}
+Finally, $\nu_H$ is evaluated at the integration points in GVEC angles and projected onto the Fourier basis of $\nu$,
+such that the same Newton method as for the Boozer angles is used to find $(\thet,\zeta)$ for given $(\thet^\star_H,\zeta^\star_H)$.
+
+On a rational surface $\iota=nN_{FP}/m$, a regular solution requires $\hat f_{mn}=0$, which is the current closure condition of an MHD equilibrium {cite}`haeseleer`.
+In a discrete equilibrium this only holds approximately, so modes with $|\iota m - nN_{FP}|$ below a small threshold are set to zero (with a warning) and modes close to a resonance can be amplified.
+For axisymmetric equilibria ($n=0$), there are no resonances and $\thet^\star_H$ is the equal-volume poloidal angle.
+
 ## Other choices for hmap
 
 As mentioned above, other choices of the hmap are available, besides the one of cylindrical coordinates:

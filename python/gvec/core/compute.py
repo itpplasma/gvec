@@ -26,6 +26,7 @@ __all__ = [
     "volume_integral",
     "Evaluations",
     "EvaluationsBoozer",
+    "EvaluationsHamada",
     "EvaluationsPEST",
     "evaluate",
     "evaluate_sfl",
@@ -525,6 +526,102 @@ def EvaluationsBoozer(
     -------
     xr.Dataset
     """
+    return _evaluations_nu_sfl(
+        rho, theta_B, zeta_B, state, "boozer", radial_derivative, epsilon_FD, **boozer_kwargs
+    )
+
+
+def EvaluationsHamada(
+    rho: Literal["int"] | CoordinateSpec,
+    theta_H: CoordinateSpec,
+    zeta_H: CoordinateSpec,
+    state,
+    radial_derivative: bool = True,
+    epsilon_FD: float = 1e-8,
+    **hamada_kwargs,
+):
+    """Create an Evaluations dataset with a grid in Hamada coordinates.
+
+    This factory function generates a mesh in logical coordinates (rho, theta, zeta) based on a grid in Hamada coordinates.
+    The grid has dimensions ("rad", "pol", "tor"), corresponding to the radial, poloidal, and toroidal directions.
+
+    If a 2D or 3D array for theta_H or zeta_H is passed, the corresponding coordinate for the poloidal/toroidal dimension
+    needs to be set manually afterwards (e.g. `ev["alpha"] = ("pol", values)` and `ev = ev.set_coords("alpha").set_xindex("alpha")`).
+
+    Parameters
+    ----------
+    rho : "int" | int | float | 1D array (DataArray, ndarray, list)
+        The specification of the radial, radius-like coordinate. "int" will use the integration points from the state object.
+        Values need to be within ``[1e-4, 1.0]`` or ``0.0``, as the hamada transform requires a flux surface.
+        For ``rho=0.0``, the hamada transform is quadratically extrapolated from the values at ``rho~1e-4``.
+    theta_H : int | float | 1D, 2D or 3D array (DataArray, ndarray, list)
+        The specification of the poloidal, angle-like Hamada coordinate.
+        1D assumes dimension "pol", 2D assumes ("pol", "tor"), 3D assumes ("rad", "pol", "tor").
+    zeta_H : int | float | 1D, 2D or 3D array (DataArray, ndarray, list)
+        The specification of the toroidal, angle-like Hamada coordinate.
+        1D assumes dimension "tor", 2D assumes ("pol", "tor"), 3D assumes ("rad", "pol", "tor").
+    state : State
+        The gvec.State object to create the grid for. Used to perform the Hamada transform.
+    radial_derivative : bool, default True
+        Whether to compute the radial derivatives of the `LA` and `NU_H` variables, at fixed GVEC angles
+        $(\\vartheta(\\rho_i,\\vartheta_{H,j},\\zeta_{H,k}),\\zeta(\\rho_i,\\vartheta_{H,j},\\zeta_{H,k}))$.
+        Computes hamada transform at additional radial points $\\rho-\\epsilon$, and uses a first order Finite Difference for the derivatives.
+    epsilon_FD : float, optional
+        The offset in rho used for the Finite Difference computation of the radial derivatives, default ``1e-8``.
+    hamada_kwargs : dict, optional
+        Additional keyword arguments to pass to the ``get_sfl_potential`` method of the ``state`` object.
+        These can be used to specify the Hamada transform parameters. For example the maximum mode number factor ``MNfactor=3``.
+
+    Returns
+    -------
+    xr.Dataset
+    """
+    return _evaluations_nu_sfl(
+        rho, theta_H, zeta_H, state, "hamada", radial_derivative, epsilon_FD, **hamada_kwargs
+    )
+
+
+def _evaluations_nu_sfl(
+    rho: Literal["int"] | CoordinateSpec,
+    theta_X: CoordinateSpec,
+    zeta_X: CoordinateSpec,
+    state,
+    sfl: Literal["boozer", "hamada"],
+    radial_derivative: bool = True,
+    epsilon_FD: float = 1e-8,
+    **sfl_kwargs,
+):
+    """Create an Evaluations dataset with a grid in Boozer or Hamada coordinates.
+
+    Both are straight-fieldline coordinates of the form ``theta_X = theta + LA + iota * NU_X``, ``zeta_X = zeta + NU_X``,
+    with ``X="B"`` for Boozer and ``X="H"`` for Hamada coordinates.
+    Implementation of EvaluationsBoozer and EvaluationsHamada.
+
+    Parameters
+    ----------
+    rho : "int" | int | float | 1D array (DataArray, ndarray, list)
+        The specification of the radial, radius-like coordinate, see EvaluationsBoozer.
+    theta_X, zeta_X : int | float | 1D, 2D or 3D array (DataArray, ndarray, list)
+        The specification of the poloidal and toroidal straight-fieldline angles, see EvaluationsBoozer.
+    state : State
+        The gvec.State object to create the grid for. Used to compute the straight-fieldline potential.
+    sfl : "boozer" | "hamada"
+        The type of straight-fieldline coordinates.
+    radial_derivative : bool, default True
+        Whether to compute the radial derivatives of the `LA` and `NU_X` variables with Finite Differences.
+    epsilon_FD : float, optional
+        The offset in rho used for the Finite Difference computation of the radial derivatives, default ``1e-8``.
+    sfl_kwargs : dict, optional
+        Additional keyword arguments to pass to the ``get_sfl_potential`` method of the ``state`` object.
+
+    Returns
+    -------
+    xr.Dataset
+    """
+    S = {"boozer": "B", "hamada": "H"}[sfl]
+    name = sfl.capitalize()
+    th, zt, nu = f"theta_{S}", f"zeta_{S}", f"NU_{S}"
+
     match rho:
         case str() if rho == "int":
             intp = [state.get_integration_points(q) for q in ["X1", "X2", "LA"]]
@@ -544,66 +641,65 @@ def EvaluationsBoozer(
             rho = ("rad", np.array([rho]))
         case _:
             raise ValueError(f"Could not parse rho, got {rho}.")
-    match theta_B:
+    match theta_X:
         case xr.DataArray():
-            theta_B = theta_B
+            theta_X = theta_X
         case np.ndarray() | Sequence():
-            theta_B = np.asarray(theta_B)
-            if theta_B.ndim == 1:
-                theta_B = ("pol", theta_B)
-            elif theta_B.ndim == 2:
-                theta_B = (("pol", "tor"), theta_B)
-            elif theta_B.ndim == 3:
-                theta_B = (("rad", "pol", "tor"), theta_B)
+            theta_X = np.asarray(theta_X)
+            if theta_X.ndim == 1:
+                theta_X = ("pol", theta_X)
+            elif theta_X.ndim == 2:
+                theta_X = (("pol", "tor"), theta_X)
+            elif theta_X.ndim == 3:
+                theta_X = (("rad", "pol", "tor"), theta_X)
             else:
-                raise ValueError(f"theta_B can only be 1D, 2D, 3D, not {theta_B.ndim}D")
+                raise ValueError(f"{th} can only be 1D, 2D, 3D, not {theta_X.ndim}D")
         case int():
-            theta_B = ("pol", np.linspace(0, 2 * np.pi, theta_B, endpoint=False))
+            theta_X = ("pol", np.linspace(0, 2 * np.pi, theta_X, endpoint=False))
         case float():
-            theta_B = ("pol", np.array([theta_B]))
+            theta_X = ("pol", np.array([theta_X]))
         case _:
-            raise ValueError(f"Could not parse theta_B, got {theta_B}.")
-    match zeta_B:
+            raise ValueError(f"Could not parse {th}, got {theta_X}.")
+    match zeta_X:
         case xr.DataArray():
-            zeta_B = zeta_B
+            zeta_X = zeta_X
         case np.ndarray() | Sequence():
-            zeta_B = np.asarray(zeta_B)
-            if zeta_B.ndim == 1:
-                zeta_B = ("tor", zeta_B)
-            elif zeta_B.ndim == 2:
-                zeta_B = (("pol", "tor"), zeta_B)
-            elif zeta_B.ndim == 3:
-                zeta_B = (("rad", "pol", "tor"), zeta_B)
+            zeta_X = np.asarray(zeta_X)
+            if zeta_X.ndim == 1:
+                zeta_X = ("tor", zeta_X)
+            elif zeta_X.ndim == 2:
+                zeta_X = (("pol", "tor"), zeta_X)
+            elif zeta_X.ndim == 3:
+                zeta_X = (("rad", "pol", "tor"), zeta_X)
             else:
-                raise ValueError(f"zeta_B can only be 1D, 2D, 3D, not {zeta_B.ndim}D")
+                raise ValueError(f"{zt} can only be 1D, 2D, 3D, not {zeta_X.ndim}D")
         case float():
-            zeta_B = ("tor", np.array([zeta_B]))
+            zeta_X = ("tor", np.array([zeta_X]))
         case int():
-            zeta_B = (
+            zeta_X = (
                 "tor",
-                np.linspace(0, 2 * np.pi / state.nfp, zeta_B, endpoint=False),
+                np.linspace(0, 2 * np.pi / state.nfp, zeta_X, endpoint=False),
             )
         case _:
-            raise ValueError(f"Could not parse zeta_B, got {zeta_B}.")
+            raise ValueError(f"Could not parse {zt}, got {zeta_X}.")
 
     ds = xr.Dataset(
         coords=dict(
             rho=rho,
         ),
         data_vars=dict(
-            theta_B=theta_B,
-            zeta_B=zeta_B,
+            **{th: theta_X, zt: zeta_X},
         ),
     )
     if ds.rho.size == 0:
         raise ValueError("rho cannot be empty.")
 
     # --- detect extrapolation to axis --- #
-    # cannot perform the boozer transform at rho=0.0 (needs a flux surface)
+    # cannot perform the boozer/hamada transform at rho=0.0 (needs a flux surface)
     # 1) remove rho=0.0 from the dataset 'ds'
-    # 2) compute a Boozer transform (separately) away from the axis
-    # 3) extrapolate zeta, theta, LA, NU_B to the axis
-    # 4) concatenate the extrapolated values again after the Boozer transform for the other radial points
+    # 2) compute a Boozer/Hamada transform (separately) away from the axis
+    # 3) extrapolate zeta, theta, LA, NU_B/NU_H to the axis
+    # 4) concatenate the extrapolated values again after the transform for the other radial points
     if ds.rho[0] == 0.0 and 0.0 not in ds.rho[1:]:
         extrapolate = True
         ds = ds.isel(rad=slice(1, None))
@@ -616,22 +712,22 @@ def EvaluationsBoozer(
 
     # special case: only rho=0.0 requested, remaining dataset is empty
     if ds.rho.size:
-        # === Find the logical coordinates of the Boozer grid === #
-        # first perform the boozer transform on the target surfaces
-        # get_boozer_angles expects a list of (theta_B, zeta_B) coordinates
-        # - broadcast such that theta_B, zeta_B are both (pol, tor) and stack
+        # === Find the logical coordinates of the Boozer/Hamada grid === #
+        # first perform the transform on the target surfaces
+        # get_boozer_angles expects a list of (theta_X, zeta_X) coordinates
+        # - broadcast such that theta_X, zeta_X are both (pol, tor) and stack
         # - unstack the result again
-        # if theta_B or zeta_B are 3D, we need to do this on each surface individually and stich it together
-        sfl_boozer = state.get_boozer(ds.rho, **boozer_kwargs)
-        if "rad" in ds.theta_B.dims or "rad" in ds.zeta_B.dims:  # 3D
+        # if theta_X or zeta_X are 3D, we need to do this on each surface individually and stich it together
+        sfl_potential = state.get_sfl_potential(ds.rho, sfl, **sfl_kwargs)
+        if "rad" in ds[th].dims or "rad" in ds[zt].dims:  # 3D
             theta = []
             zeta = []
             for rad, rho in enumerate(ds.rho):
                 dsr = ds.isel(rad=rad)
-                stacked = dsr[["theta_B", "zeta_B"]]
+                stacked = dsr[[th, zt]]
                 stacked = stacked.broadcast_like(stacked).stack(tz=("pol", "tor"))
-                tz_B = np.stack([stacked.theta_B, stacked.zeta_B], axis=0)
-                tz = state.get_boozer_angles(sfl_boozer, tz_B, rad)
+                tz_X = np.stack([stacked[th], stacked[zt]], axis=0)
+                tz = state.get_boozer_angles(sfl_potential, tz_X, rad)
                 stacked["theta"] = ("tz", tz[0, :])
                 stacked["zeta"] = ("tz", tz[1, :])
                 theta.append(stacked["theta"].unstack("tz"))
@@ -640,9 +736,9 @@ def EvaluationsBoozer(
             ds["zeta"] = xr.concat(zeta, dim="rad")
 
         else:  # 2D
-            stacked = ds[["theta_B", "zeta_B"]].stack(tz=("pol", "tor"))
-            tz_B = np.stack([stacked.theta_B, stacked.zeta_B], axis=0)
-            tz = state.get_boozer_angles(sfl_boozer, tz_B)
+            stacked = ds[[th, zt]].stack(tz=("pol", "tor"))
+            tz_X = np.stack([stacked[th], stacked[zt]], axis=0)
+            tz = state.get_boozer_angles(sfl_potential, tz_X)
             stacked["theta"] = (("tz", "rad"), tz[0, :, :])
             stacked["zeta"] = (("tz", "rad"), tz[1, :, :])
             ds["theta"] = stacked["theta"].unstack("tz")
@@ -650,16 +746,16 @@ def EvaluationsBoozer(
 
         if radial_derivative:
             # as the radial derivatives must be at a fixed (theta,zeta) position for each flux surface,
-            # we have to evaluate LA and NU_B at these same positions, in order compute the derivative with FD
+            # we have to evaluate LA and NU_B/NU_H at these same positions, in order compute the derivative with FD
             ds_eps = ds.copy()
-            sfl_boozer_eps = state.get_boozer(ds.rho - epsilon_FD, **boozer_kwargs)
-            ds_eps = add_Boozer_LA_NU(ds_eps, state, sfl_boozer_eps)
+            sfl_potential_eps = state.get_sfl_potential(ds.rho - epsilon_FD, sfl, **sfl_kwargs)
+            ds_eps = add_LA_NU(ds_eps, state, sfl_potential_eps, nu)
 
-        ds = add_Boozer_LA_NU(ds, state, sfl_boozer)
+        ds = add_LA_NU(ds, state, sfl_potential, nu)
 
         # === Add radial derivative, computed with FD: === #
         if radial_derivative:
-            for var in ["LA", "NU_B"]:
+            for var in ["LA", nu]:
                 name = ds[var].attrs["long_name"]
                 symbol = ds[var].attrs["symbol"]
                 for deriv, source in zip(["r", "rt", "rz"], [var, f"d{var}_dt", f"d{var}_dz"]):
@@ -676,23 +772,23 @@ def EvaluationsBoozer(
                     )
 
     # === Extrapolate to axis === #
-    # 1) calls evaluate_on_axis -> evaluate_sfl -> EvaluationsBoozer with rho > 0 values for extrapolation
+    # 1) calls evaluate_on_axis -> evaluate_sfl -> EvaluationsBoozer/Hamada with rho > 0 values for extrapolation
     # 2) concatenate the extrapolated values with the original dataset, and fix the indices and coordinates
     if extrapolate:
         ds_on_axis = evaluate_on_axis(
             state,
-            theta=ds.theta_B,
-            zeta=ds.zeta_B,
-            sfl="boozer",
+            theta=ds[th],
+            zeta=ds[zt],
+            sfl=sfl,
             radial_derivative=radial_derivative,
             epsilon_FD=epsilon_FD,
-            **boozer_kwargs,
+            **sfl_kwargs,
         )
-        # special case: only rho=0.0 requested, 'ds' is empty, no Boozer transform was performed yet
+        # special case: only rho=0.0 requested, 'ds' is empty, no transform was performed yet
         if ds.rho.size:
             q_radial = [q for q in ds.data_vars if "rad" in ds[q].dims]
             q_nonradial = [q for q in ds.data_vars if "rad" not in ds[q].dims]
-            ds_merged = xr.concat([ds_on_axis, ds[q_radial]], dim="rad").drop_indexes("zeta_B")
+            ds_merged = xr.concat([ds_on_axis, ds[q_radial]], dim="rad").drop_indexes(zt)
             for q in q_nonradial:
                 ds_merged[q] = ds[q]
             ds = ds_merged
@@ -701,16 +797,16 @@ def EvaluationsBoozer(
                 ds_on_axis.reset_coords("rho")
                 .expand_dims("rad")
                 .set_coords("rho")
-                .drop_indexes(["theta_B", "zeta_B"])
+                .drop_indexes([th, zt])
             )
 
     # === Metadata === #
     ds.rho.attrs["long_name"] = "Logical radial coordinate"
     ds.rho.attrs["symbol"] = r"\rho"
-    ds.theta_B.attrs["long_name"] = "Boozer straight-fieldline poloidal angle"
-    ds.theta_B.attrs["symbol"] = r"\theta_B"
-    ds.zeta_B.attrs["long_name"] = "Boozer toroidal angle"
-    ds.zeta_B.attrs["symbol"] = r"\zeta_B"
+    ds[th].attrs["long_name"] = f"{name} straight-fieldline poloidal angle"
+    ds[th].attrs["symbol"] = rf"\theta_{S}"
+    ds[zt].attrs["long_name"] = f"{name} toroidal angle"
+    ds[zt].attrs["symbol"] = rf"\zeta_{S}"
     ds.theta.attrs["long_name"] = "Logical poloidal angle"
     ds.theta.attrs["symbol"] = r"\theta"
     ds.zeta.attrs["long_name"] = "Logical toroidal angle"
@@ -724,10 +820,10 @@ def EvaluationsBoozer(
     if "tor" in ds:
         ds = ds.drop_vars("tor")
 
-    if ds.theta_B.dims == ("pol",):
-        ds = ds.set_coords("theta_B").set_xindex("theta_B")
-    if ds.zeta_B.dims == ("tor",):
-        ds = ds.set_coords("zeta_B").set_xindex("zeta_B")
+    if ds[th].dims == ("pol",):
+        ds = ds.set_coords(th).set_xindex(th)
+    if ds[zt].dims == ("tor",):
+        ds = ds.set_coords(zt).set_xindex(zt)
 
     return ds
 
@@ -871,11 +967,13 @@ def EvaluationsPEST(
     return ds
 
 
-def add_Boozer_LA_NU(ds: xr.Dataset, state, sfl_boozer):
-    """Add the LA and NU_B variables as computed by the boozer transform to the dataset.
+def add_LA_NU(ds: xr.Dataset, state, sfl_potential, nu: Literal["NU_B", "NU_H"]):
+    """Add the LA and NU_B (or NU_H) variables as computed by the boozer (or hamada) transform to the dataset.
 
-    Helper function for EvaluationsBoozer and related methods.
+    Helper function for EvaluationsBoozer, EvaluationsHamada and related methods.
     """
+    name = {"NU_B": "Boozer", "NU_H": "Hamada"}[nu] + " angular potential"
+    symbol_nu = {"NU_B": r"\nu_B", "NU_H": r"\nu_H"}[nu]
     # Flatten theta, zeta
     theta = ds.theta.transpose("rad", "pol", "tor").values.reshape(ds.rad.size, -1)
     zeta = ds.zeta.transpose("rad", "pol", "tor").values.reshape(ds.rad.size, -1)
@@ -884,8 +982,12 @@ def add_Boozer_LA_NU(ds: xr.Dataset, state, sfl_boozer):
     outputs_nu = []
     for r, rho in enumerate(ds.rho.data):
         thetazeta = np.stack([theta[r, :], zeta[r, :]], axis=0)
-        outputs_la.append(state.evaluate_boozer_list_tz_all(sfl_boozer, "LA", [r], thetazeta))
-        outputs_nu.append(state.evaluate_boozer_list_tz_all(sfl_boozer, "NU", [r], thetazeta))
+        outputs_la.append(
+            state.evaluate_boozer_list_tz_all(sfl_potential, "LA", [r], thetazeta)
+        )
+        outputs_nu.append(
+            state.evaluate_boozer_list_tz_all(sfl_potential, "NU", [r], thetazeta)
+        )
 
     # Write LA/NU to dataset
     for deriv, value in zip(["", "t", "z", "tt", "tz", "zz"], zip(*outputs_la)):
@@ -905,13 +1007,13 @@ def add_Boozer_LA_NU(ds: xr.Dataset, state, sfl_boozer):
         )
     for deriv, value in zip(["", "t", "z", "tt", "tz", "zz"], zip(*outputs_nu)):
         if deriv == "":
-            var = "NU_B"
-            long_name = "Boozer angular potential"
-            symbol = r"\nu_B"
+            var = nu
+            long_name = name
+            symbol = symbol_nu
         else:
-            var = f"dNU_B_d{deriv}"
-            long_name = derivative_name_smart("Boozer angular potential", deriv)
-            symbol = latex_partial_smart(r"\nu_B", deriv)
+            var = f"d{nu}_d{deriv}"
+            long_name = derivative_name_smart(name, deriv)
+            symbol = latex_partial_smart(symbol_nu, deriv)
         value = np.stack(value).reshape(ds.rad.size, ds.pol.size, ds.tor.size)
         ds[var] = (
             ("rad", "pol", "tor"),
@@ -1019,17 +1121,17 @@ def evaluate_sfl(
     rho: CoordinateSpec | Literal["int"],
     theta: CoordinateSpec,
     zeta: CoordinateSpec,
-    sfl: Literal["boozer", "pest"],
+    sfl: Literal["boozer", "pest", "hamada"],
     extrapolate: bool = True,
-    **boozer_kwargs,
+    **sfl_kwargs,
 ) -> xr.Dataset:
     r"""
-    Evaluate the specified quantities on a grid in straight-fieldline coordinates (Boozer or PEST).
+    Evaluate the specified quantities on a grid in straight-fieldline coordinates (Boozer, PEST or Hamada).
     This function creates an xarray Dataset with a specified grid and evaluates the desired
     quantities and recursively determined prerequisites on that grid.
 
     Values at ``rho=0.0`` are quadratically extrapolated from the values at ``rho~1e-4`` using ``evaluate_on_axis``.
-    For ``sfl="boozer"``, the boozer transform itself is also extrapolated to the axis.
+    For ``sfl="boozer"`` and ``sfl="hamada"``, the transform itself is also extrapolated to the axis.
 
     Parameters
     ----------
@@ -1070,13 +1172,13 @@ def evaluate_sfl(
         - A 2D array-like with assumed dimensions (pol, tor).
         - A 3D array-like with assumed dimensions (rad, pol, tor).
         - An xarray.DataArray containing at least the dimension ``tor``.
-    sfl : "boozer" | "pest"
+    sfl : "boozer" | "pest" | "hamada"
         The type of straight-fieldline coordinates to use for the grid.
     extrapolate: bool, default: True
         When ``True``, values close to the ``rho=0`` coordinate singularity are extrapolated quadratically.
-    boozer_kwargs : optional
-        Additional keyword arguments to pass to the ``get_boozer`` method of the ``state`` object.
-        These can be used to specify the Boozer transform parameters.
+    sfl_kwargs : optional
+        Additional keyword arguments to pass to the ``get_sfl_potential`` method of the ``state`` object,
+        for ``sfl="boozer"`` or ``sfl="hamada"``. These can be used to specify the transform parameters.
         For example the maximum mode number factor ``MNfactor=3``.
 
     Returns
@@ -1085,7 +1187,7 @@ def evaluate_sfl(
         An xarray Dataset containing the evaluated quantities and prerequisites on the specified grid.
 
         The returned Dataset has (at least) dimensions ``("rad", "pol", "tor")`` corresponding to the radial, poloidal, and toroidal directions.
-        With 1D or equidistant coordinates, the respective coordinates are ``rho(rad)``, ``theta_P(pol)`` or ``theta_B(pol)``, and ``zeta(tor)`` or ``zeta_B(tor)``.
+        With 1D or equidistant coordinates, the respective coordinates are ``rho(rad)``, ``theta_P(pol)``, ``theta_B(pol)`` or ``theta_H(pol)``, and ``zeta(tor)``, ``zeta_B(tor)`` or ``zeta_H(tor)``.
         The logical coordinates are then normal data variables of more dimensions in the dataset.
 
     See Also
@@ -1100,18 +1202,20 @@ def evaluate_sfl(
     if not isinstance(state, State):
         raise TypeError(f"Expected a gvec.State object, got {type(state)}.")
     if sfl.lower() == "boozer":
-        ev = EvaluationsBoozer(rho, theta, zeta, state, **boozer_kwargs)
+        ev = EvaluationsBoozer(rho, theta, zeta, state, **sfl_kwargs)
     elif sfl.lower() == "pest":
         ev = EvaluationsPEST(rho, theta, zeta, state)
+    elif sfl.lower() == "hamada":
+        ev = EvaluationsHamada(rho, theta, zeta, state, **sfl_kwargs)
     else:
-        raise ValueError(f"Unsupported SFL type {sfl}. Expected 'boozer' or 'pest'.")
+        raise ValueError(f"Unsupported SFL type {sfl}. Expected 'boozer', 'pest' or 'hamada'.")
     compute(ev, *quantities, state=state)
     # --- extrapolate to axis if needed --- #
     # compute is incorrect at rho=0.0 as Jac=0.0 causes all kinds of issues there.
     # recompute all quantities away from the axis, extrapolate towards the axis and overwrite the wrong values
     if extrapolate and "rho" in ev and 0.0 in ev.rho:
         ev_axis = evaluate_on_axis(
-            state, *quantities, theta=theta, zeta=zeta, sfl=sfl, **boozer_kwargs
+            state, *quantities, theta=theta, zeta=zeta, sfl=sfl, **sfl_kwargs
         )
         for q in ev.data_vars:
             if "rad" in ev[q].dims:
@@ -1124,8 +1228,8 @@ def evaluate_on_axis(
     *quantities: str,
     theta: CoordinateSpec | Literal["int"],
     zeta: CoordinateSpec | Literal["int"],
-    sfl: None | Literal["boozer", "pest"] = None,
-    **boozer_kwargs,
+    sfl: None | Literal["boozer", "pest", "hamada"] = None,
+    **sfl_kwargs,
 ) -> xr.Dataset:
     """
     Evaluate the values of the specified quantities on the magnetic axis using quadratic extrapolation from off-axis evaluations at ``rho=[1.1e-4, 2.2e-4, 3.3e-4]``.
@@ -1146,7 +1250,7 @@ def evaluate_on_axis(
             theta=theta,
             zeta=zeta,
             sfl=sfl,
-            **boozer_kwargs,
+            **sfl_kwargs,
         )
 
     r1 = ev.isel(rad=0)

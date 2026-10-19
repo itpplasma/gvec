@@ -50,6 +50,13 @@ toq("toq_boozer_nu", Qs_boozer)
 :format: myst
 ```
 
+### Additional solution variables for the Hamada transform
+```{versionadded} 1.6
+```
+If a Hamada transform is performed (e.g. [`evaluate_sfl(..., sfl="hamada")`](#gvec.core.compute.evaluate_sfl)), the variables `NU_H`, `dNU_H_dr`, ... `dNU_H_dzz` are available.
+In contrast to the Boozer potential, the Hamada potential $\nu_H$ is the solution of a magnetic differential equation on the whole flux surface and has no local definition.
+It is therefore only available from the Hamada transform.
+
 ## Curvilinear coordinates
 ```{code-cell} ipython3
 :tags: [remove-input]
@@ -92,6 +99,21 @@ Qs_metric_P = ["theta_P", "Jac_P", "e_rho_P", "e_theta_P", "e_zeta_P", "grad_the
 toq("toq_metric_P", Qs_metric_P)
 ```
 ```{glue:md} toq_metric_P
+:format: myst
+```
+
+### Hamada coordinates
+```{versionadded} 1.6
+```
+```{code-cell} ipython3
+:tags: [remove-input]
+Qs_metric_H = ["Jac_H", "e_rho_H", "e_theta_H", "e_zeta_H", "grad_theta_H", "grad_zeta_H",
+  "g_rr_H", "g_rt_H", "g_rz_H", "g_tt_H", "g_tz_H", "g_zz_H",
+  "k_tt_H", "k_tz_H", "k_zz_H", "II_tt_H", "II_tz_H", "II_zz_H",
+  ]
+toq("toq_metric_H", Qs_metric_H)
+```
+```{glue:md} toq_metric_H
 :format: myst
 ```
 
@@ -193,6 +215,17 @@ toq("toq_B_P", Qs_B_P)
 :format: myst
 ```
 
+### Hamada magnetic field
+```{code-cell} ipython3
+:tags: [remove-input]
+Qs_B_H = ["B_contra_t_H", "B_contra_z_H", "B_rho_H", "B_theta_H", "B_zeta_H",
+  "dmod_B_dr_H", "dmod_B_dt_H", "dmod_B_dz_H"]
+toq("toq_B_H", Qs_B_H)
+```
+```{glue:md} toq_B_H
+:format: myst
+```
+
 ## Current density
 ```{code-cell} ipython3
 :tags: [remove-input]
@@ -220,6 +253,16 @@ Qs_J_P = ["J_contra_t_P", "J_rho_P", "J_theta_P", "J_zeta_P"]
 toq("toq_J_P", Qs_J_P)
 ```
 ```{glue:md} toq_J_P
+:format: myst
+```
+
+### Hamada current density
+```{code-cell} ipython3
+:tags: [remove-input]
+Qs_J_H = ["J_contra_t_H", "J_contra_z_H", "J_rho_H", "J_theta_H", "J_zeta_H"]
+toq("toq_J_H", Qs_J_H)
+```
+```{glue:md} toq_J_H
 :format: myst
 ```
 
@@ -269,7 +312,7 @@ toq("toq_curvature", Qs_curvature)
 ## Others
 ```{code-cell} ipython3
 :tags: [remove-input]
-Qs_others = sorted(set(gvec.core.compute.QUANTITIES.keys()) - set(Qs_solution) - set(Qs_boozer) - set(Qs_metric) - set(Qs_hmap) - set(Qs_flux) - set(Qs_B) - set(Qs_pressure) - set(Qs_curvature) - set(Qs_J) - set(Qs_B_B) - set(Qs_metric_B) - set(Qs_metric_P) - set(Qs_B_P) - set(Qs_B_B) - set(Qs_J_B) - set(Qs_J_P) - set(Qs_derived) - set(Qs_Mercier) - set(Qs_current) - set(Qs_geometric) - set(Qs_force))
+Qs_others = sorted(set(gvec.core.compute.QUANTITIES.keys()) - set(Qs_solution) - set(Qs_boozer) - set(Qs_metric) - set(Qs_hmap) - set(Qs_flux) - set(Qs_B) - set(Qs_pressure) - set(Qs_curvature) - set(Qs_J) - set(Qs_B_B) - set(Qs_metric_B) - set(Qs_metric_P) - set(Qs_B_P) - set(Qs_metric_H) - set(Qs_B_H) - set(Qs_J_H) - set(Qs_B_B) - set(Qs_J_B) - set(Qs_J_P) - set(Qs_derived) - set(Qs_Mercier) - set(Qs_current) - set(Qs_geometric) - set(Qs_force))
 toq("toq_others", Qs_others)
 ```
 ```{glue:md} toq_others

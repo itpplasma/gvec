@@ -15,8 +15,10 @@ try:
     from gvec.core.compute import (
         Evaluations,
         EvaluationsBoozer,
+        EvaluationsHamada,
         EvaluationsPEST,
         compute,
+        fluxsurface_integral,
         volume_integral,
     )
     from gvec.util import compute_FD
@@ -192,6 +194,19 @@ def ev_boozer(teststate, radial_derivative):
         rho=[0.5, 1.0],
         theta_B=20,
         zeta_B=18,
+        state=teststate,
+        radial_derivative=radial_derivative,
+        MNfactor=5,
+    )
+    return ds
+
+
+@pytest.fixture(scope="session")
+def ev_hamada(teststate, radial_derivative):
+    ds = EvaluationsHamada(
+        rho=[0.5, 1.0],
+        theta_H=20,
+        zeta_H=18,
         state=teststate,
         radial_derivative=radial_derivative,
         MNfactor=5,
@@ -407,6 +422,32 @@ def test_EvaluationsBoozer_fieldlines(teststate, radial_derivative):
     for var in ds.data_vars:
         assert "symbol" in ds[var].attrs, f"no symbol defined in {var} attributes"
         assert "long_name" in ds[var].attrs, f"no long_name defined in {var} attributes"
+
+
+def test_hamada(teststate, ev_hamada, radial_derivative):
+    ds = ev_hamada.copy()
+    assert {"rho", "theta_H", "zeta_H"} == set(ds.coords)
+    assert {"NU_H", "dNU_H_dt", "dNU_H_dz", "dNU_H_dtz"} < set(ds.data_vars)
+
+    # the Hamada Jacobian is constant on each flux surface (limited by the smoothness of the axisNB hmap)
+    teststate.compute(ds, "Jac_H")
+    Jac_H_avg = ds.Jac_H.mean(("pol", "tor"))
+    np.testing.assert_allclose(ds.Jac_H, Jac_H_avg.broadcast_like(ds.Jac_H), rtol=1e-4)
+    # ... and equal to dV/drho / (4 pi^2), computed independently on the logical integration points
+    ref = teststate.evaluate("Jac", rho=ds.rho.values, theta="int", zeta="int")
+    np.testing.assert_allclose(
+        Jac_H_avg, fluxsurface_integral(ref.Jac) / (4 * np.pi**2), rtol=1e-6
+    )
+    # the Jacobian in Boozer coordinates on the same surfaces is far from constant
+    ev_B = teststate.evaluate_sfl("Jac_B", rho=ds.rho.values, theta=20, zeta=18, sfl="boozer")
+    Jac_B_var = ev_B.Jac_B.max(("pol", "tor")) - ev_B.Jac_B.min(("pol", "tor"))
+    assert np.all(Jac_B_var.values > 0.1 * np.abs(Jac_H_avg.values))
+
+    if radial_derivative:
+        # all remaining hamada quantities can be computed
+        teststate.compute(
+            ds, "B_theta_H", "J_contra_t_H", "J_contra_z_H", "g_tt_H", "e_rho_H", "II_tt_H"
+        )
 
 
 def test_pest(teststate, ev_pest):
@@ -795,7 +836,7 @@ def test_derivatives(teststate, q):
     np.testing.assert_allclose(ds[f"d{q}_dz"], dQdz[4:-4, 4:-4, 4:-4], atol=1e-8 * Q_scale)
 
 
-@pytest.mark.parametrize("sfl", ["boozer", "pest"])
+@pytest.mark.parametrize("sfl", ["boozer", "pest", "hamada"])
 @pytest.mark.parametrize("q", ["mod_B"])
 def test_derivatives_sfl(teststate, sfl, q):
     suffix = sfl[0].upper()
@@ -816,9 +857,9 @@ def test_derivatives_sfl(teststate, sfl, q):
     FDpos = [-4, -3, -2, -1, 1, 2, 3, 4]
     FDcoefs = np.array([1 / 280, -4 / 105, 1 / 5, -4 / 5, 4 / 5, -1 / 5, 4 / 105, -1 / 280])
     dr = ds.rho.values[1] - ds.rho.values[0]
-    if sfl == "boozer":
-        dt = ds.theta_B.values[1] - ds.theta_B.values[0]
-        dz = ds.zeta_B.values[1] - ds.zeta_B.values[0]
+    if sfl in ["boozer", "hamada"]:
+        dt = ds[f"theta_{suffix}"].values[1] - ds[f"theta_{suffix}"].values[0]
+        dz = ds[f"zeta_{suffix}"].values[1] - ds[f"zeta_{suffix}"].values[0]
     elif sfl == "pest":
         dt = ds.theta_P.values[1] - ds.theta_P.values[0]
         dz = ds.zeta.values[1] - ds.zeta.values[0]
@@ -991,8 +1032,9 @@ def test_integral_quantities_aux_r_int_tz(teststate, ev_r_int_tz, quantity):
     [
         ("boozer", dict(MNfactor=1)),
         ("pest", dict()),
+        ("hamada", dict(MNfactor=1)),
     ],
-    ids=["boozer", "pest"],
+    ids=["boozer", "pest", "hamada"],
 )
 def test_evaluate_sfl(teststate, sfl, kwargs):
     ev = teststate.evaluate_sfl(
@@ -1009,7 +1051,7 @@ def test_evaluate_sfl(teststate, sfl, kwargs):
     assert ev.tor.size == 31
 
 
-@pytest.mark.parametrize("sfl", [None, "boozer", "pest"])
+@pytest.mark.parametrize("sfl", [None, "boozer", "pest", "hamada"])
 def test_evaluate_on_axis(teststate, sfl):
     ev = teststate.evaluate_on_axis("mod_B", theta=10, zeta=5, sfl=sfl, MNfactor=1)
     if sfl is None:
@@ -1029,7 +1071,7 @@ def test_evaluate_on_axis(teststate, sfl):
     np.testing.assert_allclose(ev.mod_B, ev_ref.mod_B.squeeze(), rtol=1e-5, atol=1e-4)
 
 
-@pytest.mark.parametrize("sfl", [None, "boozer", "pest"])
+@pytest.mark.parametrize("sfl", [None, "boozer", "pest", "hamada"])
 def test_evaluate_with_axis(teststate, sfl):
     if sfl is None:
         ev = teststate.evaluate("mod_B", rho=np.linspace(0, 1, 3), theta=10, zeta=5)
@@ -1051,7 +1093,7 @@ def test_evaluate_with_axis(teststate, sfl):
     np.testing.assert_allclose(ev.mod_B.sel(rho=0.0), ev_axis.mod_B, atol=1e-12)
 
 
-@pytest.mark.parametrize("sfl", [None, "boozer", "pest"])
+@pytest.mark.parametrize("sfl", [None, "boozer", "pest", "hamada"])
 def test_evaluate_only_axis(teststate, sfl):
     if sfl is None:
         ev = teststate.evaluate("mod_B", rho=0.0, theta=10, zeta=5)
