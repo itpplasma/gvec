@@ -1522,6 +1522,11 @@ SUBROUTINE Finalize()
     CALL functional%free()
     DEALLOCATE(functional)
   END IF
+  ! the checkpoint belongs to this state: a state initialized later may have other sizes
+  IF(ALLOCATED(dofs_checkpoint)) THEN
+    CALL dofs_checkpoint%free()
+    DEALLOCATE(dofs_checkpoint)
+  END IF
   CALL FinalizeAnalyze()
   CALL FinalizeOutput()
   CALL FinalizeRestart()

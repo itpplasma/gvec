@@ -22,6 +22,7 @@ IMPLICIT NONE
 PRIVATE
 PUBLIC t_fBase, sin_cos_map
 PUBLIC fBase_free ! required for f90wrap
+PUBLIC fBase_block_size
 
 TYPE :: t_fBase
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -83,6 +84,8 @@ TYPE :: t_fBase
   PROCEDURE :: evalDOF_IP       => fBase_evalDOF_IP_tens
   !  PROCEDURE :: projectIPtoDOF   => fBase_projectIPtoDOF
   PROCEDURE :: projectIPtoDOF   => fBase_projectIPtoDOF_tens
+  PROCEDURE :: evalDOF_IP_multi => fBase_evalDOF_IP_multi
+  PROCEDURE :: projectIPtoDOF_multi => fBase_projectIPtoDOF_multi
   PROCEDURE :: projectxntoDOF   => fBase_projectxntoDOF
   PROCEDURE :: initDOF          => fBase_initDOF
 
@@ -1235,6 +1238,171 @@ SUBROUTINE fBase_projectIPtoDOF_tens(sf,add,factor,deriv,y_IP,DOFs)
     END DO
   END IF !add
 END SUBROUTINE fBase_projectIPtoDOF_tens
+
+!===================================================================================================================================
+!> Block size for the blocked transforms fBase_evalDOF_IP_multi / fBase_projectIPtoDOF_multi over nG radial points:
+!! at most 32 points per block, and at least one block per OpenMP thread.
+!===================================================================================================================================
+FUNCTION fBase_block_size(nG) RESULT(bs)
+!$ USE omp_lib, ONLY: OMP_GET_MAX_THREADS
+  IMPLICIT NONE
+  INTEGER, INTENT(IN) :: nG
+  INTEGER             :: bs, nThreads
+  nThreads=1
+!$ nThreads=OMP_GET_MAX_THREADS()
+  bs=MAX(1,MIN(32,(nG+nThreads-1)/nThreads))
+END FUNCTION fBase_block_size
+
+!===================================================================================================================================
+!> Evaluate at all interpolation points for a block of nG radial points at once:
+!! y_IP(:,g) = sf%evalDOF_IP(deriv,DOFs(g,:)), g=1..nG.
+!! The theta transform of all points is one DGEMM (instead of two small DGEMMs per point), the zeta transform is a short
+!! explicit loop per point.
+!===================================================================================================================================
+SUBROUTINE fBase_evalDOF_IP_multi(sf,deriv,nG,DOFs,y_IP)
+  ! MODULES
+  IMPLICIT NONE
+  ! INPUT VARIABLES -------------------------!
+  CLASS(t_fBase), INTENT(IN   ) :: sf       !! self
+  INTEGER       , INTENT(IN   ) :: deriv    !! =0: base, =2: dthet , =3: dzeta
+  INTEGER       , INTENT(IN   ) :: nG       !! number of points (columns of y_IP, rows of DOFs)
+  REAL(wp)      , INTENT(IN   ) :: DOFs(:,:)  !! (1:nG,1:sf%modes)
+  ! OUTPUT VARIABLES -------------------------!
+  REAL(wp)      , INTENT(  OUT) :: y_IP(:,:)  !! (1:sf%mn_IP,1:nG)
+  ! LOCAL VARIABLES -------------------------!
+  INTEGER                       :: iMode,offset,mTotal,nTotal,nmax,nyq1,nyq2,g,j,n,s,k0
+  REAL(wp),ALLOCATABLE          :: Amn(:,:,:),Ctmp(:,:,:,:)
+  ! CODE --------------------------------------------------------------------------------------------------------------------------!
+  IF(SIZE(DOFs,1).LT.nG .OR. SIZE(DOFs,2).NE.sf%modes .OR. SIZE(y_IP,1).NE.sf%mn_IP .OR. SIZE(y_IP,2).LT.nG) &
+    CALL abort(__STAMP__,'fBase_evalDOF_IP_multi: wrong array sizes')
+  IF(.NOT.ANY(deriv.EQ.(/0,DERIV_THET,DERIV_ZETA/))) CALL abort(__STAMP__, &
+       "fBase_evalDOF_IP_multi: derivative must be 0,DERIV_THET,DERIV_ZETA!")
+  nmax  =sf%mn_max(2)
+  mTotal=sf%mTotal1D
+  nTotal=2*nmax+1
+  nyq1  =sf%mn_nyq(1)
+  nyq2  =sf%mn_nyq(2)
+  offset=sf%mTotal1D-(sf%mn_max(1)+1) !=0 if sin or cos, =sf%mn_max(1)+1 if sin+cos
+  ALLOCATE(Amn(1:mTotal,-nmax:nmax,1:nG),Ctmp(1:nyq1,1:2,-nmax:nmax,1:nG))
+  Amn=0.0_wp
+  DO iMode=sf%sin_range(1)+1,sf%sin_range(2)
+    Amn(1+sf%Xmn(1,iMode),sf%Xmn(2,iMode)/sf%nfp,:)=DOFs(1:nG,iMode)
+  END DO
+  DO iMode=sf%cos_range(1)+1,sf%cos_range(2)
+    Amn(offset+1+sf%Xmn(1,iMode),sf%Xmn(2,iMode)/sf%nfp,:)=DOFs(1:nG,iMode)
+  END DO
+  IF(deriv.EQ.DERIV_THET)THEN
+    CALL DGEMM('N','N',2*nyq1,nTotal*nG,mTotal,1.0_wp,sf%base1D_dthet_IPthet,2*nyq1,Amn,mTotal,0.0_wp,Ctmp,2*nyq1)
+  ELSE
+    CALL DGEMM('N','N',2*nyq1,nTotal*nG,mTotal,1.0_wp,sf%base1D_IPthet      ,2*nyq1,Amn,mTotal,0.0_wp,Ctmp,2*nyq1)
+  END IF
+  IF(deriv.EQ.DERIV_ZETA)THEN
+    DO g=1,nG
+      DO j=1,nyq2
+        k0=nyq1*(j-1)
+        y_IP(k0+1:k0+nyq1,g)=0.0_wp
+        DO n=-nmax,nmax
+          DO s=1,2
+            y_IP(k0+1:k0+nyq1,g)=y_IP(k0+1:k0+nyq1,g)+Ctmp(:,s,n,g)*sf%base1D_dzeta_IPzeta(s,n,j)
+          END DO
+        END DO
+      END DO
+    END DO
+  ELSE
+    DO g=1,nG
+      DO j=1,nyq2
+        k0=nyq1*(j-1)
+        y_IP(k0+1:k0+nyq1,g)=0.0_wp
+        DO n=-nmax,nmax
+          DO s=1,2
+            y_IP(k0+1:k0+nyq1,g)=y_IP(k0+1:k0+nyq1,g)+Ctmp(:,s,n,g)*sf%base1D_IPzeta(s,n,j)
+          END DO
+        END DO
+      END DO
+    END DO
+  END IF
+  DEALLOCATE(Amn,Ctmp)
+END SUBROUTINE fBase_evalDOF_IP_multi
+
+
+!===================================================================================================================================
+!> Projection of a block of nG radial points at once (inverse of fBase_evalDOF_IP_multi):
+!! DOFs(g,:) = add*DOFs(g,:) + factor(g)*projectIPtoDOF(deriv,y_IP(:,g)), g=1..nG.
+!===================================================================================================================================
+SUBROUTINE fBase_projectIPtoDOF_multi(sf,add,factor,deriv,nG,y_IP,DOFs)
+  ! MODULES
+  IMPLICIT NONE
+  ! INPUT VARIABLES -------------------------!
+  CLASS(t_fBase), INTENT(IN   ) :: sf        !! self
+  LOGICAL       , INTENT(IN   ) :: add       !! =F initialize DOFs , =T add to DOFs
+  REAL(wp)      , INTENT(IN   ) :: factor(:) !! (1:nG) scale result of point g by factor(g)
+  INTEGER       , INTENT(IN   ) :: deriv     !! =0: base, =2: dthet , =3: dzeta
+  INTEGER       , INTENT(IN   ) :: nG        !! number of points
+  REAL(wp)      , INTENT(IN   ) :: y_IP(:,:) !! (1:sf%mn_IP,1:nG)
+  ! OUTPUT VARIABLES -------------------------!
+  REAL(wp)      , INTENT(INOUT) :: DOFs(:,:) !! (1:nG,1:sf%modes)
+  ! LOCAL VARIABLES -------------------------!
+  INTEGER                       :: iMode,offset,mTotal,nTotal,nmax,nyq1,nyq2,g,j,n,s,k0
+  REAL(wp),ALLOCATABLE          :: Amn(:,:,:),Ctmp(:,:,:,:)
+  ! CODE --------------------------------------------------------------------------------------------------------------------------!
+  IF(SIZE(DOFs,1).LT.nG .OR. SIZE(DOFs,2).NE.sf%modes .OR. SIZE(y_IP,1).NE.sf%mn_IP .OR. SIZE(y_IP,2).LT.nG &
+     .OR. SIZE(factor).LT.nG) CALL abort(__STAMP__,'fBase_projectIPtoDOF_multi: wrong array sizes')
+  IF(.NOT.ANY(deriv.EQ.(/0,DERIV_THET,DERIV_ZETA/))) CALL abort(__STAMP__, &
+       "fBase_projectIPtoDOF_multi: derivative must be 0,DERIV_THET,DERIV_ZETA!")
+  nmax  =sf%mn_max(2)
+  mTotal=sf%mTotal1D
+  nTotal=2*nmax+1
+  nyq1  =sf%mn_nyq(1)
+  nyq2  =sf%mn_nyq(2)
+  offset=sf%mTotal1D-(sf%mn_max(1)+1) !=0 if sin or cos, =sf%mn_max(1)+1 if sin+cos
+  ALLOCATE(Amn(1:mTotal,-nmax:nmax,1:nG),Ctmp(1:nyq1,1:2,-nmax:nmax,1:nG))
+  IF(deriv.EQ.DERIV_ZETA)THEN
+    DO g=1,nG
+      DO n=-nmax,nmax
+        DO s=1,2
+          Ctmp(:,s,n,g)=0.0_wp
+          DO j=1,nyq2
+            k0=nyq1*(j-1)
+            Ctmp(:,s,n,g)=Ctmp(:,s,n,g)+y_IP(k0+1:k0+nyq1,g)*sf%base1D_dzeta_IPzeta(s,n,j)
+          END DO
+        END DO
+      END DO
+    END DO
+  ELSE
+    DO g=1,nG
+      DO n=-nmax,nmax
+        DO s=1,2
+          Ctmp(:,s,n,g)=0.0_wp
+          DO j=1,nyq2
+            k0=nyq1*(j-1)
+            Ctmp(:,s,n,g)=Ctmp(:,s,n,g)+y_IP(k0+1:k0+nyq1,g)*sf%base1D_IPzeta(s,n,j)
+          END DO
+        END DO
+      END DO
+    END DO
+  END IF
+  IF(deriv.EQ.DERIV_THET)THEN
+    CALL DGEMM('T','N',mTotal,nTotal*nG,2*nyq1,1.0_wp,sf%base1D_dthet_IPthet,2*nyq1,Ctmp,2*nyq1,0.0_wp,Amn,mTotal)
+  ELSE
+    CALL DGEMM('T','N',mTotal,nTotal*nG,2*nyq1,1.0_wp,sf%base1D_IPthet      ,2*nyq1,Ctmp,2*nyq1,0.0_wp,Amn,mTotal)
+  END IF
+  IF(add)THEN
+    DO iMode=sf%sin_range(1)+1,sf%sin_range(2)
+      DOFs(1:nG,iMode)=DOFs(1:nG,iMode)+factor(1:nG)*Amn(1+sf%Xmn(1,iMode),sf%Xmn(2,iMode)/sf%nfp,:)
+    END DO
+    DO iMode=sf%cos_range(1)+1,sf%cos_range(2)
+      DOFs(1:nG,iMode)=DOFs(1:nG,iMode)+factor(1:nG)*Amn(offset+1+sf%Xmn(1,iMode),sf%Xmn(2,iMode)/sf%nfp,:)
+    END DO
+  ELSE
+    DO iMode=sf%sin_range(1)+1,sf%sin_range(2)
+      DOFs(1:nG,iMode)=factor(1:nG)*Amn(1+sf%Xmn(1,iMode),sf%Xmn(2,iMode)/sf%nfp,:)
+    END DO
+    DO iMode=sf%cos_range(1)+1,sf%cos_range(2)
+      DOFs(1:nG,iMode)=factor(1:nG)*Amn(offset+1+sf%Xmn(1,iMode),sf%Xmn(2,iMode)/sf%nfp,:)
+    END DO
+  END IF
+  DEALLOCATE(Amn,Ctmp)
+END SUBROUTINE fBase_projectIPtoDOF_multi
 
 !===================================================================================================================================
 !>  take values interpolated at sf%s_IP positions and project onto fourier basis by integration

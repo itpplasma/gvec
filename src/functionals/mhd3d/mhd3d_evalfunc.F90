@@ -559,6 +559,7 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
   USE MODgvec_MHD3D_Vars,    ONLY : X1_BC_type,X2_BC_type,LA_BC_type
   USE MODgvec_MHD3D_Vars,    ONLY : FreeBoundary, Force_b_X1, Force_b_X2 ! free boundary vars
   USE MODgvec_sol_var_MHD3D, ONLY : t_sol_var_MHD3D
+  USE MODgvec_fBase,         ONLY : fBase_block_size
   IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT VARIABLES
@@ -573,7 +574,9 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
   INTEGER   :: ibase,nBase,iMode,modes,iGP,i_mn,Deg,iElem,modes_str,modes_end,iRank,offset_modes(0:nRanks)
-  REAL(wp)  :: w_GP_IP,p_mu_0
+  REAL(wp)  :: p_mu_0
+  INTEGER   :: ib,g0,g1,bs
+  REAL(wp)  :: w_blk(32) !! weights of one block of radial points (fBase_block_size <= 32)
   REAL(wp)  ::    F_X1_GP_IP(nGP_str:nGP_end,1:X1_base%f%modes)
   REAL(wp)  ::  F_X1ds_GP_IP(nGP_str:nGP_end,1:X1_base%f%modes)
   REAL(wp)  ::    F_X2_GP_IP(nGP_str:nGP_end,1:X2_base%f%modes)
@@ -591,6 +594,7 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
   CALL par_Barrier(beforeScreenOut="DEBUG ENTER FORCE")
 #endif
   __PERFON('EvalForce')
+  bs=fBase_block_size(nGP_end-nGP_str+1)
   IF(callEvalAux) THEN
     CALL EvalAux(dofs_in,JacCheck)
   END IF
@@ -670,14 +674,16 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
 
   __PERFON('fbase')
 !$OMP PARALLEL DO &
-!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP,w_GP_IP)
-  DO iGP=nGP_str,nGP_end
-    w_GP_IP=w_GP(iGP)*dthet_dzeta
-    CALL X1_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY(     :,iGP),F_X1_GP_IP(  iGP,:))
-    CALL X1_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_THET,coefY_thet(:,iGP),F_X1_GP_IP(  iGP,:))!d/dthet
-    CALL X1_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_ZETA,coefY_zeta(:,iGP),F_X1_GP_IP(  iGP,:))!d/dzeta
-    CALL X1_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY_s(   :,iGP),F_X1ds_GP_IP(iGP,:))
-  END DO !iGP
+!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1,w_blk)
+  DO ib=1,(nGP_end-nGP_str+bs)/bs
+    g0=nGP_str+(ib-1)*bs
+    g1=MIN(g0+bs-1,nGP_end)
+    w_blk(1:g1-g0+1)=w_GP(g0:g1)*dthet_dzeta
+    CALL X1_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY(     :,g0:g1),F_X1_GP_IP(  g0:g1,:))
+    CALL X1_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_THET,g1-g0+1,coefY_thet(:,g0:g1),F_X1_GP_IP(  g0:g1,:))!d/dthet
+    CALL X1_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_ZETA,g1-g0+1,coefY_zeta(:,g0:g1),F_X1_GP_IP(  g0:g1,:))!d/dzeta
+    CALL X1_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY_s(   :,g0:g1),F_X1ds_GP_IP(g0:g1,:))
+  END DO !ib
 !$OMP END PARALLEL DO
   __PERFOFF('fbase')
 
@@ -760,14 +766,16 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
 
   __PERFON('fbase')
 !$OMP PARALLEL DO &
-!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP,w_GP_IP)
-  DO iGP=nGP_str,nGP_end
-    w_GP_IP = w_GP(iGP)*dthet_dzeta
-    CALL X2_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY(     :,iGP),F_X2_GP_IP(  iGP,:))
-    CALL X2_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_THET,coefY_thet(:,iGP),F_X2_GP_IP(  iGP,:))!d/dthet
-    CALL X2_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_ZETA,coefY_zeta(:,iGP),F_X2_GP_IP(  iGP,:))!d/dzeta
-    CALL X2_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY_s(   :,iGP),F_X2ds_GP_IP(iGP,:))
-  END DO !iGP
+!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1,w_blk)
+  DO ib=1,(nGP_end-nGP_str+bs)/bs
+    g0=nGP_str+(ib-1)*bs
+    g1=MIN(g0+bs-1,nGP_end)
+    w_blk(1:g1-g0+1)=w_GP(g0:g1)*dthet_dzeta
+    CALL X2_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY(     :,g0:g1),F_X2_GP_IP(  g0:g1,:))
+    CALL X2_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_THET,g1-g0+1,coefY_thet(:,g0:g1),F_X2_GP_IP(  g0:g1,:))!d/dthet
+    CALL X2_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_ZETA,g1-g0+1,coefY_zeta(:,g0:g1),F_X2_GP_IP(  g0:g1,:))!d/dzeta
+    CALL X2_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY_s(   :,g0:g1),F_X2ds_GP_IP(g0:g1,:))
+  END DO !ib
 !$OMP END PARALLEL DO
   __PERFOFF('fbase')
   __PERFON('sbase')
@@ -814,12 +822,15 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
   __PERFON('fbase')
 !   coefY_zeta(i_mn,iGP)= w_GP_IP*sJ_bcov_thet(i_mn,iGP)
 !   coefY_thet(i_mn,iGP)=-w_GP_IP*sJ_bcov_zeta(i_mn,iGP)
-!$OMP PARALLEL DO SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP,w_GP_IP)
-  DO iGP=nGP_str,nGP_end
-    w_GP_IP=PhiPrime_GP(iGP)*w_GP(iGP)*dthet_dzeta
-    CALL LA_base%f%projectIPtoDOF(.FALSE., w_GP_IP,DERIV_ZETA, sJ_bcov_thet(:,iGP),F_LA_GP_IP(iGP,:)) !d/dzeta
-    CALL LA_base%f%projectIPtoDOF(.TRUE. ,-w_GP_IP,DERIV_THET, sJ_bcov_zeta(:,iGP),F_LA_GP_IP(iGP,:)) !d/dthet
-  END DO !iGP
+!$OMP PARALLEL DO &
+!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1,w_blk)
+  DO ib=1,(nGP_end-nGP_str+bs)/bs
+    g0=nGP_str+(ib-1)*bs
+    g1=MIN(g0+bs-1,nGP_end)
+    w_blk(1:g1-g0+1)=PhiPrime_GP(g0:g1)*w_GP(g0:g1)*dthet_dzeta
+    CALL LA_base%f%projectIPtoDOF_multi(.FALSE., w_blk,DERIV_ZETA,g1-g0+1,sJ_bcov_thet(:,g0:g1),F_LA_GP_IP(g0:g1,:)) !d/dzeta
+    CALL LA_base%f%projectIPtoDOF_multi(.TRUE. ,-w_blk,DERIV_THET,g1-g0+1,sJ_bcov_zeta(:,g0:g1),F_LA_GP_IP(g0:g1,:)) !d/dthet
+  END DO !ib
 !$OMP END PARALLEL DO
   __PERFOFF('fbase')
   __PERFON('sbase')
@@ -1129,6 +1140,8 @@ SUBROUTINE BuildPrecond()
 !  REAL(wp),DIMENSION(nGP_str:nGP_end)   :: DLA_tt, DLA_tz, DLA_zz
 
   REAL(wp),ALLOCATABLE        :: D_mn(:),P_BCaxis(:,:), P_BCedge(:,:) !only needed on MPIroot
+  REAL(wp),ALLOCATABLE        :: K_e(:,:,:,:),W_e(:,:) !mode-independent element matrices of the radial weights
+  REAL(wp)                    :: m2,mn,n2
 
   ! free boundary
   INTEGER :: i_mn
@@ -1255,34 +1268,32 @@ SUBROUTINE BuildPrecond()
          WRITE(UNIT_stdout,*)'WARNING: very small DX1_ss: m,n,SUM(|DX1_ss|)= ',SUM(ABS(DX1_ss(1:nGP)))
     END IF
 
+    ALLOCATE(K_e(0:deg,0:deg,1:5,1:nElems),W_e(1:nGP,1:5))
+    W_e(:,1)=DX1_ss(1:nGP); W_e(:,2)=DX1(1:nGP); W_e(:,3)=DX1_tt(1:nGP); W_e(:,4)=DX1_tz(1:nGP); W_e(:,5)=DX1_zz(1:nGP)
+    CALL PrecondElemMats(deg,degGP,nElems,X1_base%s%base_GP,X1_base%s%base_ds_GP,5,W_e,(/.TRUE.,.FALSE.,.FALSE.,.FALSE.,.FALSE./),K_e)
     __PERFON('modes_loop_1')
 !$OMP PARALLEL DO        &
 !$OMP   SCHEDULE(STATIC)   &
-!$OMP   PRIVATE(iMode,iGP,D_mn,iElem,i,j,iBase,tBC,nD,norm_mn) &
+!$OMP   PRIVATE(iMode,iGP,D_mn,iElem,i,j,iBase,tBC,nD,norm_mn,m2,mn,n2) &
 !$OMP   FIRSTPRIVATE(P_BCaxis,P_BCedge) &
 !$OMP   DEFAULT(SHARED)
     DO iMode=modes_str,modes_end !<<<
       norm_mn=1.0_wp/X1_base%f%snorm_base(iMode)
       CALL precond_X1(iMode)%reset() !set all values to zero
-      D_mn(1:nGP)=    (DX1(1:nGP)+(X1_Base%f%Xmn(1,iMode)**2)  *DX1_tt(1:nGP)   &
-             -(X1_Base%f%Xmn(1,iMode)*X1_Base%f%Xmn(2,iMode))  *DX1_tz(1:nGP)   &  !correct sign of theta,zeta derivative!
-                          +       (X1_Base%f%Xmn(2,iMode)**2)  *DX1_zz(1:nGP) )
-      iGP=1
+      ! element matrices of D_ss (ds-ds) and of D_mn = D + m^2 D_tt - m n D_tz + n^2 D_zz (correct sign of theta,zeta
+      ! derivative!), assembled from the mode-independent parts K_e
+      m2=REAL(X1_Base%f%Xmn(1,iMode)**2,wp)
+      mn=REAL(X1_Base%f%Xmn(1,iMode)*X1_Base%f%Xmn(2,iMode),wp)
+      n2=REAL(X1_Base%f%Xmn(2,iMode)**2,wp)
       DO iElem=1,nElems
         iBase=X1_base%s%base_offset(iElem)
         DO i=0,deg
           DO j=0,deg
             CALL precond_X1(iMode)%add_element(iBase+i,iBase+j,                   &
-                                   (SUM( X1_base%s%base_ds_GP(0:degGP,i,iElem)    &
-                                        *DX1_ss(iGP:iGP+degGP)                    &
-                                        *X1_base%s%base_ds_GP(0:degGP,j,iElem)    &
-                                       + X1_base%s%base_GP(0:degGP,i,iElem)       &
-                                        *D_mn(iGP:iGP+degGP)                      &
-                                        *X1_base%s%base_GP(0:degGP,j,iElem)       &
-                                   )*norm_mn)  )
+                                   ( K_e(i,j,1,iElem)+K_e(i,j,2,iElem)+m2*K_e(i,j,3,iElem) &
+                                    -mn*K_e(i,j,4,iElem)+n2*K_e(i,j,5,iElem) )*norm_mn )
           END DO !j=0,deg
         END DO !i=0,deg
-        iGP=iGP+(degGP+1)
       END DO !iElem=1,nElems
 
       IF (FreeBoundary) THEN
@@ -1322,6 +1333,7 @@ SUBROUTINE BuildPrecond()
     END DO !iMode
 !$OMP END PARALLEL DO
     __PERFOFF('modes_loop_1')
+    DEALLOCATE(K_e,W_e)
     DEALLOCATE(P_BCaxis,P_BCedge)
   END SELECT !TYPE X1
 
@@ -1338,34 +1350,32 @@ SUBROUTINE BuildPrecond()
            WRITE(UNIT_stdout,*)'WARNING: very small DX2_ss: m,n,SUM(|DX2_ss|)= ',SUM(ABS(DX2_ss(1:nGP)))
     END IF
 
+    ALLOCATE(K_e(0:deg,0:deg,1:5,1:nElems),W_e(1:nGP,1:5))
+    W_e(:,1)=DX2_ss(1:nGP); W_e(:,2)=DX2(1:nGP); W_e(:,3)=DX2_tt(1:nGP); W_e(:,4)=DX2_tz(1:nGP); W_e(:,5)=DX2_zz(1:nGP)
+    CALL PrecondElemMats(deg,degGP,nElems,X2_base%s%base_GP,X2_base%s%base_ds_GP,5,W_e,(/.TRUE.,.FALSE.,.FALSE.,.FALSE.,.FALSE./),K_e)
     __PERFON('modes_loop_2')
 !$OMP PARALLEL DO        &
 !$OMP   SCHEDULE(STATIC)  &
-!$OMP   PRIVATE(iMode,iGP,D_mn,iElem,i,j,iBase,tBC,nD,norm_mn) &
+!$OMP   PRIVATE(iMode,iGP,D_mn,iElem,i,j,iBase,tBC,nD,norm_mn,m2,mn,n2) &
 !$OMP   FIRSTPRIVATE(P_BCaxis,P_BCedge)  &
 !$OMP   DEFAULT(SHARED)
     DO iMode=modes_str,modes_end !<<<
       norm_mn=1.0_wp/X2_base%f%snorm_base(iMode)
       CALL precond_X2(iMode)%reset() !set all values to zero
-      D_mn(1:nGP)=    (DX2(1:nGP)+(X2_Base%f%Xmn(1,iMode)**2)  *DX2_tt(1:nGP)   &
-             -(X2_Base%f%Xmn(1,iMode)*X2_Base%f%Xmn(2,iMode))  *DX2_tz(1:nGP)   & !correct sign of theta,zeta derivative!
-                          +       (X2_Base%f%Xmn(2,iMode)**2)  *DX2_zz(1:nGP) )
-      iGP=1
+      ! element matrices of D_ss (ds-ds) and of D_mn = D + m^2 D_tt - m n D_tz + n^2 D_zz (correct sign of theta,zeta
+      ! derivative!), assembled from the mode-independent parts K_e
+      m2=REAL(X2_Base%f%Xmn(1,iMode)**2,wp)
+      mn=REAL(X2_Base%f%Xmn(1,iMode)*X2_Base%f%Xmn(2,iMode),wp)
+      n2=REAL(X2_Base%f%Xmn(2,iMode)**2,wp)
       DO iElem=1,nElems
         iBase=X2_base%s%base_offset(iElem)
         DO i=0,deg
           DO j=0,deg
             CALL precond_X2(iMode)%add_element(iBase+i,iBase+j,                   &
-                                   (SUM( X2_base%s%base_ds_GP(0:degGP,i,iElem)    &
-                                        *DX2_ss(iGP:iGP+degGP)                    &
-                                        *X2_base%s%base_ds_GP(0:degGP,j,iElem)    &
-                                       + X2_base%s%base_GP(0:degGP,i,iElem)       &
-                                        *D_mn(iGP:iGP+degGP)                      &
-                                        *X2_base%s%base_GP(0:degGP,j,iElem)       &
-                                   )*norm_mn)  )
+                                   ( K_e(i,j,1,iElem)+K_e(i,j,2,iElem)+m2*K_e(i,j,3,iElem) &
+                                    -mn*K_e(i,j,4,iElem)+n2*K_e(i,j,5,iElem) )*norm_mn )
           END DO !j=0,deg
         END DO !i=0,deg
-        iGP=iGP+(degGP+1)
       END DO !iElem=1,nElems
 
       IF(FreeBoundary) THEN
@@ -1406,6 +1416,7 @@ SUBROUTINE BuildPrecond()
     END DO !iMode
 !$OMP END PARALLEL DO
     __PERFOFF('modes_loop_2')
+    DEALLOCATE(K_e,W_e)
 
     DEALLOCATE(P_BCaxis,P_BCedge)
   END SELECT !TYPE X2
@@ -1417,10 +1428,13 @@ SUBROUTINE BuildPrecond()
     deg   = LA_base%s%deg
     ALLOCATE(P_BCaxis(1:deg+1,1:2*deg+1),P_BCedge(nBase-deg:nBase,nBase-2*deg:nBase))
 
+    ALLOCATE(K_e(0:deg,0:deg,1:3,1:nElems),W_e(1:nGP,1:3))
+    W_e(:,1)=DLA_tt(1:nGP); W_e(:,2)=DLA_tz(1:nGP); W_e(:,3)=DLA_zz(1:nGP)
+    CALL PrecondElemMats(deg,degGP,nElems,LA_base%s%base_GP,LA_base%s%base_GP,3,W_e,(/.FALSE.,.FALSE.,.FALSE./),K_e)
     __PERFON('modes_loop_3')
 !$OMP PARALLEL DO        &
 !$OMP   SCHEDULE(STATIC)   &
-!$OMP   PRIVATE(iMode,iGP,D_mn,iElem,i,j,iBase,tBC,nD,norm_mn) &
+!$OMP   PRIVATE(iMode,iGP,D_mn,iElem,i,j,iBase,tBC,nD,norm_mn,m2,mn,n2) &
 !$OMP   FIRSTPRIVATE(P_BCaxis,P_BCedge) &
 !$OMP   DEFAULT(SHARED)
     DO iMode=modes_str,modes_end !<<<
@@ -1433,18 +1447,17 @@ SUBROUTINE BuildPrecond()
         !CHECK =0
         IF(SUM(ABS(D_mn(1:nGP))).LT.REAL(nGP,wp)*1.0E-10) WRITE(UNIT_stdout,*)'WARNING: small DLA: m,n,SUM(|DLA_mn|)= ', &
              LA_Base%f%Xmn(1,iMode),LA_Base%f%Xmn(2,iMode),SUM(D_mn(1:nGP))
-        iGP=1
+        m2=REAL(LA_Base%f%Xmn(1,iMode)**2,wp)
+        mn=REAL(LA_Base%f%Xmn(1,iMode)*LA_Base%f%Xmn(2,iMode),wp)
+        n2=REAL(LA_Base%f%Xmn(2,iMode)**2,wp)
         DO iElem=1,nElems
           iBase=LA_base%s%base_offset(iElem)
           DO i=0,deg
             DO j=0,deg
               CALL precond_LA(iMode)%add_element(iBase+i,iBase+j,               &
-                                     (SUM( LA_base%s%base_GP(0:degGP,i,iElem)   &
-                                          *D_mn(iGP:iGP+degGP)                  &
-                                          *LA_base%s%base_GP(0:degGP,j,iElem))) )
+                                     (m2*K_e(i,j,1,iElem)-mn*K_e(i,j,2,iElem)+n2*K_e(i,j,3,iElem))*norm_mn )
             END DO !j=0,deg
           END DO !i=0,deg
-          iGP=iGP+(degGP+1)
         END DO !iElem=1,nElems
       ELSE !safety, unit matrix, if MN_ZERO exists
         DO iBase=1,nBase
@@ -1482,6 +1495,7 @@ SUBROUTINE BuildPrecond()
     END DO !iMode
 !$OMP END PARALLEL DO
     __PERFOFF('modes_loop_3')
+    DEALLOCATE(K_e,W_e)
 
     DEALLOCATE(P_BCaxis,P_BCedge)
   END SELECT !TYPE LA
@@ -1529,6 +1543,39 @@ SUBROUTINE BuildPrecond()
 
 END SUBROUTINE BuildPrecond
 
+
+!===================================================================================================================================
+!> Element matrices K(i,j,k,iElem) = sum_g B(g,i,iElem) W(g,k) B(g,j,iElem) of the radial weights W(:,k), with
+!! B = bdsGP (derivative) where use_ds(k), else B = bGP, for the preconditioner assembly.
+!===================================================================================================================================
+SUBROUTINE PrecondElemMats(deg,degGP,nElems,bGP,bdsGP,nW,W,use_ds,K)
+  IMPLICIT NONE
+  INTEGER , INTENT(IN ) :: deg,degGP,nElems,nW
+  REAL(wp), INTENT(IN ) :: bGP(0:degGP,0:deg,1:nElems),bdsGP(0:degGP,0:deg,1:nElems)
+  REAL(wp), INTENT(IN ) :: W(1:(degGP+1)*nElems,1:nW)
+  LOGICAL , INTENT(IN ) :: use_ds(1:nW)
+  REAL(wp), INTENT(OUT) :: K(0:deg,0:deg,1:nW,1:nElems)
+  INTEGER               :: iElem,iW,i,g0
+  REAL(wp)              :: BW(0:degGP,0:deg)
+!$OMP PARALLEL DO SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iElem,iW,i,g0,BW)
+  DO iElem=1,nElems
+    g0=(iElem-1)*(degGP+1)+1
+    DO iW=1,nW
+      IF(use_ds(iW))THEN
+        DO i=0,deg
+          BW(:,i)=bdsGP(:,i,iElem)*W(g0:g0+degGP,iW)
+        END DO
+        K(:,:,iW,iElem)=MATMUL(TRANSPOSE(bdsGP(:,:,iElem)),BW)
+      ELSE
+        DO i=0,deg
+          BW(:,i)=bGP(:,i,iElem)*W(g0:g0+degGP,iW)
+        END DO
+        K(:,:,iW,iElem)=MATMUL(TRANSPOSE(bGP(:,:,iElem)),BW)
+      END IF
+    END DO
+  END DO
+!$OMP END PARALLEL DO
+END SUBROUTINE PrecondElemMats
 
 !===================================================================================================================================
 !> Apply preconditioner matrix for single mode of one variable
