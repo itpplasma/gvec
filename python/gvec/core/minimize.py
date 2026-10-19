@@ -187,7 +187,8 @@ class MinimizationState(State):
     @with_binding
     def save_statefile(self):
         logger.debug("Writing state to file.")
-        _state.save_statefile()
+        with chdir(self.rundir):  # the file name has no directory: write it next to the parameter file
+            _state.save_statefile()
 
     @property
     def iota(self) -> BSpline | Polynomial:
@@ -301,6 +302,10 @@ class MinimizationState(State):
         if self.parameters.get("FreeBoundary", False):
             # the boundary moves during a free-boundary run: write the current boundary, not the input one
             self.parameters.update(self._boundary_parameters())
+            # the current boundary already contains the initial boundary perturbation: do not apply it again
+            for key in [k for k in self.parameters if k.lower().startswith(("x1pert_b_", "x2pert_b_"))]:
+                del self.parameters[key]
+            self.parameters["boundary_perturb"] = False
 
         self.save_statefile()
         # name hardcoded in pygvec/state.F90:save_statefile & state/restart.f90:WriteStateToASCII

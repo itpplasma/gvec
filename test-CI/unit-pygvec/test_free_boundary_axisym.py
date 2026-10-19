@@ -314,3 +314,127 @@ def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     )  # stops on the step size, far from the reference
     assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
     assert fixed.gnorm < 1e-7
+
+
+def test_saved_parameters_do_not_repeat_boundary_perturbation(tmp_path):
+    """The parameter file saved by a free-boundary state holds the current boundary, which already contains the
+    boundary perturbation of the parameters: a state started from that file has the same boundary."""
+    from gvec.core.minimize import MinimizationState
+
+    p = _params()
+    p.update(ProjectName="SP", FreeBoundary=True, boundary_perturb=True, boundary_perturb_type="cosm")
+    p["X1pert_b_cos"] = {(0, 0): 0.01}
+    (tmp_path / "a").mkdir()
+    st = MinimizationState.new(p, rundir=tmp_path / "a")
+    x0 = st._get_boundary_dofs()
+    st.save()
+    (tmp_path / "b").mkdir()
+    st2 = MinimizationState.new(gvec.util.read_parameters(st.parameterfile), rundir=tmp_path / "b")
+    np.testing.assert_allclose(st2._get_boundary_dofs(), x0, rtol=0, atol=1e-14)
+
+
+def test_save_and_restart_reproduce_state(tmp_path, monkeypatch):
+    """save() writes the state file into the run directory it reports (also when the working directory is
+    elsewhere), and a state restarted from the saved parameter and state files has the same boundary and the same
+    boundary force."""
+    from gvec.core.minimize import MinimizationState
+
+    monkeypatch.chdir(tmp_path)
+    p = _params()
+    p.update(ProjectName="RS", FreeBoundary=True, init_LA=False)  # init_LA=T would recompute lambda on restart
+    p["pres"] = {"type": "polynomial", "coefs": [1e4, -1e4]}
+    (tmp_path / "a").mkdir()
+    st = MinimizationState.new(p, rundir=tmp_path / "a")
+    B2 = np.linspace(1.0, 2.0, st.t_n * st.z_n)
+    st.set_Bext_squared(B2)
+    st.solve(logfinaliter=False, maxIter=300, minimize_tol=1e-8)
+    pert = np.zeros_like(st._get_boundary_dofs())
+    pert[0] = 0.003
+    assert st._apply_boundary_perturbation(pert, 0.6)
+    x0, f0 = st._get_boundary_dofs(), st._eval_boundary_forces()
+    st.save()
+    assert st.statefile.parent == tmp_path / "a" and st.statefile.exists()
+    (tmp_path / "b").mkdir()
+    st2 = MinimizationState.new(gvec.util.read_parameters(st.parameterfile), rundir=tmp_path / "b", statefile=st.statefile)
+    st2.set_Bext_squared(B2)
+    np.testing.assert_allclose(st2._get_boundary_dofs(), x0, rtol=1e-14, atol=0)
+    np.testing.assert_allclose(st2._eval_boundary_forces(), f0, rtol=0, atol=1e-10 * np.abs(f0).max())
+
+
+def test_free_boundary_stage_does_not_inherit_convergence_norms(tmp_path):
+    """Each free-boundary stage starts its gtol/xtol/ftol statistics afresh: a stage must not stop before its first
+    update on the gradient norm of the previous stage."""
+    pytest.importorskip("fbtools")
+    p = _params()
+    p["totalIter"] = 20000
+    p["minimize_tol"] = 1e-5
+    # gtol is met by the first measured gradient norm, so every stage stops after exactly one update
+    p["free_boundary"] = dict(updates=4, tolerance=1e-12, dt=1e-3, force_ratio_limit=0.0, gtol=1e30)
+    p["stages"] = [{}, {}]
+    run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    stages = sorted(run.diagnostics_stage.children)
+    # entry 0 of each stage is the state before its first update
+    entries = [np.isfinite(run.diagnostics_stage[s].to_dataset().free_boundary_target.values).sum() for s in stages]
+    assert entries == [2, 2]
+
+
+def test_free_boundary_descent_resets_minimizer_at_min_dt(tmp_path, monkeypatch):
+    """When the step-size heuristic holds dt at min_dt, the free-boundary minimizer is reset."""
+    pytest.importorskip("fbtools")
+    from gvec.core.minimize import MinimizationState
+
+    calls = []
+    update = MinimizationState._free_boundary_update
+
+    def record(self, *args, **kwargs):
+        calls.append((kwargs["dt"], kwargs["reset_minimizer"]))
+        return update(self, *args, **kwargs)
+
+    monkeypatch.setattr(MinimizationState, "_free_boundary_update", record)
+    p = _params()
+    p["totalIter"] = 20000
+    p["minimize_tol"] = 1e-5
+    # initial dt below min_dt: the first update is taken at dt = min_dt
+    p["free_boundary"] = dict(updates=2, tolerance=1e-12, dt=1e-4, min_dt=2e-4, force_ratio_limit=0.0, gtol=0.0)
+    gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    assert calls[0] == (pytest.approx(2e-4), True)
+
+
+def test_B2_exterior_counterclockwise_zeta(tmp_path):
+    """For a counter-clockwise zeta (G-frame of a circular axis traversed with +phi), the poloidal circulation of
+    the exterior plasma field is mu_0 I_tor, with the sign of GVEC's I_tor (the circulation of B along theta)."""
+    pytest.importorskip("fbtools")
+    from gvec.core.run.free_boundary import _get_B2_fp
+
+    nz = 9
+    z = np.linspace(0, 2 * np.pi, nz, endpoint=False)
+    axis = dict(
+        nzeta=nz,
+        zetafull=z,
+        xyz=np.array([R0 * np.cos(z), R0 * np.sin(z), 0 * z]),
+        Nxyz=np.array([np.cos(z), np.sin(z), 0 * z]),
+        Bxyz=np.array([0 * z, 0 * z, -1 + 0 * z]),  # (N, B, dX0/dzeta) right-handed
+    )
+    with gvec.util.chdir(tmp_path):
+        gvec.gframe.write_Gframe_ncfile("ccw-Gframe.nc", {"nfp": 1, "axis": axis})
+    p = _params()
+    p.update(which_hmap=21, hmap_ncfile=str(tmp_path / "ccw-Gframe.nc"))
+    p["X1_b_cos"] = {(1, 0): A0}
+    p["X1_a_cos"] = {(0, 0): 0.0}
+    st = gvec.State.new(p)
+    assert not st.clockwise_zeta
+
+    nt, nz = st.get_integration_points()[2], st.get_integration_points()[4]
+    loop = Coil(np.array([[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0], [1, 0, 0]]).T * 20.0, 0.0)
+    theta = (np.arange(nt) + 0.5) * 2 * np.pi / nt
+    zeta = (np.arange(nz) + 0.5) * 2 * np.pi / nz
+    ev = st.evaluate("e_theta", "B", "I_tor", rho=1.0, theta=theta, zeta=zeta).isel(rad=0)
+    e_theta = ev.e_theta.transpose("xyz", "tor", "pol").values
+    B_in = ev.B.transpose("xyz", "tor", "pol").values
+    # GVEC's I_tor is the circulation of B along theta
+    i_tor = ev.I_tor.values.ravel()[0]
+    assert (B_in * e_theta).sum(axis=(0, 2))[0] * 2 * np.pi / nt / mu_0 == pytest.approx(i_tor, rel=1e-6)
+
+    _, B_plas, _, _ = _get_B2_fp(st, CoilSet([loop]), nt, nz, i_tor, True, 8)
+    circulation = (B_plas * e_theta).sum(axis=(0, 2)) * 2 * np.pi / nt
+    np.testing.assert_allclose(circulation, mu_0 * i_tor, rtol=1e-3)

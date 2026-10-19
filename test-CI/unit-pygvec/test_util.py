@@ -476,3 +476,22 @@ def test_compute_boundary_perturbation_keeps_restart_boundary():
     assert dict(base["X2_b_sin"]) == {(1, 0): 0.5}
     assert dict(pert["X1pert_b_cos"]) == pytest.approx({(0, 0): 0.1})
     assert dict(pert["X2pert_b_sin"]) == {}
+
+
+def test_compute_boundary_perturbation_removes_dropped_modes():
+    """A boundary mode of the restart state that the new parameters leave out is zero in the new boundary:
+    its perturbation is minus the restart value (also when the whole sin/cos block is left out)."""
+    restart = {
+        "X1_b_cos": {(0, 0): 3.0, (1, 0): 0.5, (2, 1): 0.03},
+        "X2_b_sin": {(1, 0): 0.5},
+        "X1_b_sin": {(1, 1): 0.01},
+    }
+    new = {
+        "X1_b_cos": {(0, 0): 3.0, (1, 0): 0.5},
+        "X2_b_sin": {(1, 0): 0.5},
+    }
+    base, pert = util.compute_boundary_perturbation(restart, new)
+    assert dict(base["X1_b_cos"]) == restart["X1_b_cos"]
+    assert dict(pert["X1pert_b_cos"]) == {(2, 1): -0.03}
+    assert dict(pert["X1pert_b_sin"]) == {(1, 1): -0.01}
+    assert dict(pert["X2pert_b_sin"]) == {}
