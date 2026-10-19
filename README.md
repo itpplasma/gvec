@@ -14,7 +14,7 @@ It carries the following extra features and fixes until they are available
 * Long restart file paths.
 * VMEC boundary arrays with sparse (ragged) mode content.
 * Fix of the restart-boundary key in `compute_boundary_perturbation`.
-* Fork CI: `CI_COMMIT_REF_SLUG` paths, private-runner jobs off by default.
+* Fork CI: GitLab `CI_COMMIT_REF_SLUG` paths and private-runner jobs off by default; GitHub Actions CI.
 
 Issues for these features should be reported on [itpplasma/gvec](https://github.com/itpplasma/gvec).
 
