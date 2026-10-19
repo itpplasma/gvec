@@ -339,3 +339,43 @@ def test_free_boundary_descent_resets_minimizer_at_min_dt(tmp_path, monkeypatch)
     p["free_boundary"] = dict(updates=2, tolerance=1e-12, dt=1e-4, min_dt=2e-4, force_ratio_limit=0.0, gtol=0.0)
     gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
     assert calls[0] == (pytest.approx(2e-4), True)
+
+
+def test_B2_exterior_counterclockwise_zeta(tmp_path):
+    """For a counter-clockwise zeta (G-frame of a circular axis traversed with +phi), the poloidal circulation of
+    the exterior plasma field is mu_0 I_tor, with the sign of GVEC's I_tor (the circulation of B along theta)."""
+    pytest.importorskip("fbtools")
+    from gvec.core.run.free_boundary import _get_B2_fp
+
+    nz = 9
+    z = np.linspace(0, 2 * np.pi, nz, endpoint=False)
+    axis = dict(
+        nzeta=nz,
+        zetafull=z,
+        xyz=np.array([R0 * np.cos(z), R0 * np.sin(z), 0 * z]),
+        Nxyz=np.array([np.cos(z), np.sin(z), 0 * z]),
+        Bxyz=np.array([0 * z, 0 * z, -1 + 0 * z]),  # (N, B, dX0/dzeta) right-handed
+    )
+    with gvec.util.chdir(tmp_path):
+        gvec.gframe.write_Gframe_ncfile("ccw-Gframe.nc", {"nfp": 1, "axis": axis})
+    p = _params()
+    p.update(which_hmap=21, hmap_ncfile=str(tmp_path / "ccw-Gframe.nc"))
+    p["X1_b_cos"] = {(1, 0): A0}
+    p["X1_a_cos"] = {(0, 0): 0.0}
+    st = gvec.State.new(p)
+    assert not st.clockwise_zeta
+
+    nt, nz = st.get_integration_points()[2], st.get_integration_points()[4]
+    loop = Coil(np.array([[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0], [1, 0, 0]]).T * 20.0, 0.0)
+    theta = (np.arange(nt) + 0.5) * 2 * np.pi / nt
+    zeta = (np.arange(nz) + 0.5) * 2 * np.pi / nz
+    ev = st.evaluate("e_theta", "B", "I_tor", rho=1.0, theta=theta, zeta=zeta).isel(rad=0)
+    e_theta = ev.e_theta.transpose("xyz", "tor", "pol").values
+    B_in = ev.B.transpose("xyz", "tor", "pol").values
+    # GVEC's I_tor is the circulation of B along theta
+    i_tor = ev.I_tor.values.ravel()[0]
+    assert (B_in * e_theta).sum(axis=(0, 2))[0] * 2 * np.pi / nt / mu_0 == pytest.approx(i_tor, rel=1e-6)
+
+    _, B_plas, _, _ = _get_B2_fp(st, CoilSet([loop]), nt, nz, i_tor, True, 8)
+    circulation = (B_plas * e_theta).sum(axis=(0, 2)) * 2 * np.pi / nt
+    np.testing.assert_allclose(circulation, mu_0 * i_tor, rtol=1e-3)

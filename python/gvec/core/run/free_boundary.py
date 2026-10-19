@@ -1390,13 +1390,21 @@ def _get_B2_fp(
         boundary_biest = boundary.pos.values
         B_coils_biest = B_coils.copy()
 
+    # BIEST imposes the circulation I_biest along its poloidal index (theta) when the tangent of its toroidal index
+    # crossed with e_theta points out of the plasma, and -I_biest otherwise. Its toroidal index runs along +phi (the
+    # field periods are completed by rotations about +z). GVEC's (rho, theta, zeta) is right-handed, so
+    # e_theta x e_zeta points outwards: with clockwise zeta the toroidal tangent is -e_zeta and the orientation is
+    # outward, with counter-clockwise zeta it is e_zeta and inward, which reverses the sign of the current. GVEC's
+    # I_tor is the circulation of B along theta in both cases.
+    I_biest = mu_0 * I_tor if state.clockwise_zeta else -mu_0 * I_tor
+
     # main BIEST calculation
     time_0 = time.time()
     B_plas_ext = get_B_ext_plasma(
         boundary_biest,
         state.nfp,
         B_coils_biest,
-        I_tor * mu_0,
+        I_biest,
         digits=digits,
     )
     time_1 = time.time()
