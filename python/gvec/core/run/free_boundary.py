@@ -65,7 +65,13 @@ class FreeBoundaryRun(AbstractRun):
         self._resolved_force_ratio = 1.0
 
         self.m_max, self.n_max = self.state.get_mn_max()
+        self._reset_convergence_statistics()
 
+        if self._has_initial_stage:
+            self.stages[0]["free_boundary"] = {"updates": 0}
+
+    def _reset_convergence_statistics(self):
+        """Forget the step/gradient norms and moving averages; each stage starts its own statistics."""
         self.target_mavg_last = np.nan
         self.target_mavg = np.nan
 
@@ -75,9 +81,6 @@ class FreeBoundaryRun(AbstractRun):
 
         self.xnorm_mavg = np.nan
         self.gnorm_mavg = np.nan
-
-        if self._has_initial_stage:
-            self.stages[0]["free_boundary"] = {"updates": 0}
 
     def _allocate_diagnostics(self, track_boundary_fields: bool):
         """Setup the diagnostics dataset."""
@@ -276,6 +279,8 @@ class FreeBoundaryRun(AbstractRun):
         """
 
         # start with a fixed boundary equilibrium
+        # the norms of the previous stage must not feed this stage's moving averages and stop criteria
+        self._reset_convergence_statistics()
 
         # how many free boundary updates,
         # NOTE: required parameter

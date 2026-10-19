@@ -300,3 +300,20 @@ def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     assert np.linalg.norm(legacy.state.y - y_ref) > 1e-7  # stops on the step size, far from the reference
     assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
     assert fixed.gnorm < 1e-7
+
+
+def test_free_boundary_stage_does_not_inherit_convergence_norms(tmp_path):
+    """Each free-boundary stage starts its gtol/xtol/ftol statistics afresh: a stage must not stop before its first
+    update on the gradient norm of the previous stage."""
+    pytest.importorskip("fbtools")
+    p = _params()
+    p["totalIter"] = 20000
+    p["minimize_tol"] = 1e-5
+    # gtol is met by the first measured gradient norm, so every stage stops after exactly one update
+    p["free_boundary"] = dict(updates=4, tolerance=1e-12, dt=1e-3, force_ratio_limit=0.0, gtol=1e30)
+    p["stages"] = [{}, {}]
+    run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    stages = sorted(run.diagnostics_stage.children)
+    # entry 0 of each stage is the state before its first update
+    entries = [np.isfinite(run.diagnostics_stage[s].to_dataset().free_boundary_target.values).sum() for s in stages]
+    assert entries == [2, 2]
