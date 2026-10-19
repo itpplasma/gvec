@@ -204,6 +204,38 @@ def test_unstringify_mn():
     assert stage0["X1pert_b_cos"][2, 3] == 4.5
 
 
+def test_parameters_from_vmec_accepts_sparse_boundary_arrays():
+    """Sparse and inline VMEC Fourier assignments convert without ragged errors."""
+    import f90nml
+
+    nml = f90nml.reads(
+        """
+&INDATA
+  MPOL = 4
+  NTOR = 3
+  RBC(0, 0) = 5.5  ZBS(0, 0) = 0.0
+  RBC(0, 1) = 0.7  ZBS(0, 1) = 0.7
+  RBC(1, 1) = 0.05 ZBS(1, 1) = -0.04
+  RBC(0, 2) = 0.03 ZBS(0, 2) = 0.02
+/
+"""
+    )["indata"]
+
+    parameters = util.parameters_from_vmec(nml, "sparse")
+
+    assert parameters["X1_b_cos"] == {
+        (0, 0): 5.5,
+        (1, 0): 0.7,
+        (1, 1): 0.05,
+        (2, 0): 0.03,
+    }
+    assert parameters["X2_b_sin"] == {
+        (1, 0): 0.7,
+        (1, 1): -0.04,
+        (2, 0): 0.02,
+    }
+
+
 def test_ev2vtk(testcaserundir, testfiles):
     rho = np.linspace(0, 1, 4)
     theta = np.linspace(0, 2 * np.pi, 5)  # including endpoints
