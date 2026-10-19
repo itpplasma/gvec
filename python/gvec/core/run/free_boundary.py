@@ -646,10 +646,10 @@ class FreeBoundaryRun(AbstractRun):
                 self._resolved_force_ratio < force_ratio_limit
                 and self.free_boundary_target > free_boundary_tolerance
             ):
-                fb_aux = (
-                    self.diagnostics_stage[f"stage_{self.nth_stage}"]
-                    .force_balance.isel(updates=fb_update - 1)
-                    .transpose("pol", "tor")
+                # the last update that was evaluated (an aborted update leaves its column unfilled)
+                fb_all = self.diagnostics_stage[f"stage_{self.nth_stage}"].force_balance
+                fb_aux = fb_all.isel(updates=_last_filled_update(fb_all)).transpose(
+                    "pol", "tor"
                 )
                 M_proposed, N_proposed = minimal_modes_force_balance(
                     fb_aux,
@@ -1254,6 +1254,13 @@ class FreeBoundaryRun(AbstractRun):
         )
         axs[1].legend()
         return (fig, axs)
+
+
+def _last_filled_update(diagnostic: xr.DataArray) -> int:
+    """Index of the last entry along `updates` that holds data (the others are still NaN)."""
+    other = [dim for dim in diagnostic.dims if dim != "updates"]
+    filled = np.flatnonzero(diagnostic.notnull().any(other).values)
+    return int(filled[-1]) if len(filled) else 0
 
 
 def _descent_step_size(dt, target_mavg_last, target_mavg, min_dt, max_dt):

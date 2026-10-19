@@ -98,6 +98,26 @@ def test_free_boundary_run_axisymmetric(tmp_path):
     assert np.isfinite(run.state.evaluate("X1", rho=1.0, theta=0.0, zeta=0.0).X1.values).all()
 
 
+def test_free_boundary_resolution_proposal_after_newton_stalls_at_update_0(tmp_path):
+    """Newton that makes no step leaves only update 0 in the diagnostics; the resolution proposal at the end of
+    the stage must use that column, not the (still NaN) last one."""
+    pytest.importorskip("fbtools")
+    p = _params()
+    p["totalIter"] = 2000
+    p["minimize_tol"] = 1e-5
+    p["free_boundary"] = dict(
+        updates=4,
+        tolerance=1e-12,
+        method="newton",
+        newton_max_backtracks=0,  # no trial step is ever accepted
+        force_ratio_limit=2.0,  # > 1: always ask for the resolution proposal
+    )
+    run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    fb = run.diagnostics_stage["stage_1"].force_balance
+    assert fb.isel(updates=0).notnull().all()
+    assert fb.isel(updates=-1).isnull().all()
+
+
 def _minimization_state(tmp_path, mn_max=1):
     from gvec.core.minimize import MinimizationState
 
