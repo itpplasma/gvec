@@ -745,83 +745,38 @@ class FreeBoundaryRun(AbstractRun):
     def _fd_jacobian_parallel(
         self, perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers
     ):
-        """Forward differences of the boundary force along the columns of `perts` (n_dofs x k), computed in
-        `workers` separate processes (one GVEC instance each, one OpenMP thread each). Each worker restarts from a
-        statefile of the current (checkpointed) state and differences against its own base residual.
+        """Forward differences of the boundary force along the columns of `perts` (n_dofs x k), computed by a pool
+        of worker processes (one GVEC instance each), see _FDWorkerPool. Each worker restarts from a statefile of the
+        current (checkpointed) state and differences against its own base residual. The pool is started at the first
+        call and kept for the Newton iteration (closed by _run_newton).
         Returns the (n_dofs x k) matrix of residual differences (not divided by the step).
-
         """
-        import os
-
         self.state._restore_dofs()
         self.state.save("!Newton free-boundary base state\n")
-        statefile = Path(self.state.statefile).absolute()
-        k = perts.shape[1]
-        groups = [list(range(i, k, workers)) for i in range(min(workers, k))]
-        tasks = [
-            (
+        if getattr(self, "_fd_pool", None) is None:
+            self._fd_pool = _FDWorkerPool(
+                workers,
                 self._state_parameters,
-                str(statefile),
                 self.coil_set,
-                {j: perts[:, j] for j in g},
                 blend_depth,
                 minimize_tol,
                 maxIter,
                 digits_BIEST,
-                str((Path.cwd() / f"newton_worker_{i:03d}").absolute()),
+                Path.cwd() / "newton_workers",
             )
-            for i, g in enumerate(groups)
-        ]
-        # plain subprocesses (no multiprocessing pool): no shared semaphores and no re-import of the driver script
-        import pickle
-        import subprocess
-        import sys
+        return self._fd_pool.jacobian(Path(self.state.statefile).absolute(), perts)
 
-        # one thread per worker, each pinned to its own CPU of the CPUs available to this process (cgroup), not of
-        # this thread's affinity: with OMP_PROC_BIND the master thread is bound to one core, and the workers would
-        # inherit that mask (and bind to the same first core through OMP_PLACES)
-        env = dict(
-            os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1"
-        )
-        env["OMP_PROC_BIND"] = "false"
-        env.pop("OMP_PLACES", None)
-        cpus = _allowed_cpus()
-        procs = []
-        for i, task in enumerate(tasks):
-            cpu = {cpus[i % len(cpus)]}
-            wdir = Path(task[-1])
-            wdir.mkdir(parents=True, exist_ok=True)
-            (wdir / "task.pkl").write_bytes(pickle.dumps(task))
-            (wdir / "result.pkl").unlink(missing_ok=True)
-            cmd = [
-                sys.executable,
-                "-c",
-                "from gvec.core.run.free_boundary import _fd_worker_main; _fd_worker_main()",
-                str(wdir / "task.pkl"),
-            ]
-            with open(wdir / "worker.log", "w") as log:
-                procs.append(
-                    subprocess.Popen(
-                        cmd,
-                        env=env,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        preexec_fn=lambda cpu=cpu: os.sched_setaffinity(0, cpu),
-                    )
-                )
-        codes = [p.wait() for p in procs]
-        if any(codes):
-            raise RuntimeError(
-                f"Newton FD workers failed (exit codes {codes}); see newton_worker_*/worker.log"
-            )
-        results = [pickle.loads((Path(t[-1]) / "result.pkl").read_bytes()) for t in tasks]
-        dR = np.zeros((perts.shape[0], k))
-        for res in results:
-            for j, col in res.items():
-                dR[:, j] = col
-        return dR
+    def _run_newton(self, *args, **kwargs) -> int:
+        """Newton iteration for the free boundary, see _run_newton_loop; closes the FD worker pool at the end."""
+        self._fd_pool = None
+        try:
+            return self._run_newton_loop(*args, **kwargs)
+        finally:
+            if self._fd_pool is not None:
+                self._fd_pool.close()
+                self._fd_pool = None
 
-    def _run_newton(
+    def _run_newton_loop(
         self,
         fb_updates: int,
         blend_depth: float,
@@ -1316,33 +1271,6 @@ def _move_and_solve(state: MinimizationState, pert, blend_depth, minimize_tol, m
     return True
 
 
-def _fd_worker(task):
-    """Process-pool worker for FreeBoundaryRun._fd_jacobian_parallel: residual differences for given perturbations."""
-    (params, statefile, coil_set, perts, blend_depth, minimize_tol, maxIter, digits, wdir) = (
-        task
-    )
-    wdir = Path(wdir)
-    wdir.mkdir(parents=True, exist_ok=True)
-    state = MinimizationState.new(
-        params,
-        rundir=wdir,
-        statefile=statefile,
-        redirect_stdout=True,
-        stdout_path=wdir / "stdout.txt",
-    )
-    out = {}
-    with chdir(wdir):
-        state.reset_descent()
-        state.solve(logfinaliter=False, maxIter=maxIter, minimize_tol=minimize_tol)
-        state._checkpoint_dofs()
-        r0, _, _ = _boundary_residual(state, coil_set, digits)
-        for j, pert in perts.items():
-            if not _move_and_solve(state, pert, blend_depth, minimize_tol, maxIter):
-                raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
-            out[j] = _boundary_residual(state, coil_set, digits)[0] - r0
-    return out
-
-
 def _allowed_cpus():
     """CPUs available to this process: the cgroup (v2) cpuset if readable, else the parent's or own affinity."""
     import os
@@ -1372,14 +1300,216 @@ def _allowed_cpus():
     return [0]
 
 
+class _FDWorkerPool:
+    """Persistent worker processes for the Newton FD Jacobian, scheduled dynamically (each worker takes the next
+    column as soon as it is done with the previous one).
+
+    `workers` processes run single-threaded, each pinned to its own CPU of the CPUs available to this process
+    (cgroup), not of this thread's affinity: with OMP_PROC_BIND the master thread is bound to one core, and the
+    workers would inherit that mask. The main process is idle during the FD Jacobian: if more CPUs are available
+    than `workers`, one more worker runs on up to OMP_NUM_THREADS (of the main process) of the remaining CPUs, with as
+    many OpenMP threads, so that the pool uses the CPUs of the workers and of the main process. Plain subprocesses (no multiprocessing pool): no shared semaphores and no re-import of the driver
+    script. Commands and results are pickled frames on dedicated pipes; the GVEC output goes to the worker
+    directories.
+    """
+
+    def __init__(
+        self, workers, params, coil_set, blend_depth, minimize_tol, maxIter, digits, root
+    ):
+        import os
+        import pickle
+        import subprocess
+        import sys
+
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        task = self.root / "task.pkl"
+        task.write_bytes(
+            pickle.dumps((params, coil_set, blend_depth, minimize_tol, maxIter, digits))
+        )
+        cpus = _allowed_cpus()
+        sets = [[cpus[i % len(cpus)]] for i in range(workers)]
+        main_threads = max(1, int(os.environ.get("OMP_NUM_THREADS", "1").split(",")[0] or 1))
+        if len(cpus) > workers:
+            sets.append(cpus[workers : workers + main_threads])
+        self.procs, self.inp, self.out = [], [], []
+        for i, cpuset in enumerate(sets):
+            wdir = self.root / f"worker_{i:03d}"
+            wdir.mkdir(parents=True, exist_ok=True)
+            env = dict(
+                os.environ,
+                OMP_NUM_THREADS=str(len(cpuset)),
+                OPENBLAS_NUM_THREADS="1",
+                MKL_NUM_THREADS="1",
+            )
+            env["OMP_PROC_BIND"] = "false"
+            env.pop("OMP_PLACES", None)
+            r_cmd, w_cmd = os.pipe()
+            r_res, w_res = os.pipe()
+            cmd = [
+                sys.executable,
+                "-c",
+                "from gvec.core.run.free_boundary import _fd_worker_main; _fd_worker_main()",
+                str(task),
+                str(wdir),
+                str(r_cmd),
+                str(w_res),
+            ]
+            with open(wdir / "worker.log", "w") as log:
+                self.procs.append(
+                    subprocess.Popen(
+                        cmd,
+                        env=env,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        pass_fds=(r_cmd, w_res),
+                        preexec_fn=lambda cpuset=cpuset: os.sched_setaffinity(0, cpuset),
+                    )
+                )
+            os.close(r_cmd)
+            os.close(w_res)
+            self.inp.append(os.fdopen(w_cmd, "wb"))
+            self.out.append(os.fdopen(r_res, "rb"))
+
+    def _send(self, i, msg):
+        import pickle
+
+        pickle.dump(msg, self.inp[i])
+        self.inp[i].flush()
+
+    def jacobian(self, statefile, perts):
+        """Residual differences (n_dofs x k) for the columns of `perts` from the base state in `statefile`."""
+        import pickle
+        import selectors
+
+        k = perts.shape[1]
+        dR = np.zeros((perts.shape[0], k))
+        todo = list(range(k))
+        sel = selectors.DefaultSelector()
+        busy = 0
+        stats = []  # (worker, base seconds, column seconds, column iterations)
+        t0 = time.time()
+        for i in range(len(self.procs)):
+            self._send(i, ("base", str(statefile)))
+            if todo:
+                j = todo.pop(0)
+                self._send(i, ("col", j, perts[:, j]))
+                sel.register(self.out[i], selectors.EVENT_READ, i)
+                busy += 1
+        try:
+            while busy:
+                for key, _ in sel.select():
+                    i = key.data
+                    try:
+                        msg = pickle.load(self.out[i])
+                    except EOFError:
+                        msg = ("error", f"worker {i} exited (code {self.procs[i].wait()})")
+                    if msg[0] == "error":
+                        raise RuntimeError(
+                            f"Newton FD worker {i} failed: {msg[1]}; see {self.root}/worker_*/worker.log"
+                        )
+                    _, j, col, info = msg
+                    dR[:, j] = col
+                    stats.append((i, *info))
+                    if todo:
+                        j = todo.pop(0)
+                        self._send(i, ("col", j, perts[:, j]))
+                    else:
+                        sel.unregister(self.out[i])
+                        busy -= 1
+        finally:
+            sel.close()
+        tb = [st[1] for st in stats if st[1] is not None]
+        tc = np.array([st[2] for st in stats])
+        it = np.array([st[3] for st in stats])
+        logger.info(
+            f"FD worker pool: {k} columns on {len(self.procs)} workers in {time.time() - t0:.1f}s; base restart max "
+            f"{max(tb, default=0.0):.1f}s; column min/mean/max {tc.min():.1f}/{tc.mean():.1f}/{tc.max():.1f}s, "
+            f"iterations min/mean/max {it.min()}/{it.mean():.0f}/{it.max()}"
+        )
+        return dR
+
+    def close(self):
+        for i, p in enumerate(self.procs):
+            try:
+                if p.poll() is None:
+                    self._send(i, ("stop",))
+                self.inp[i].close()
+            except OSError:
+                pass
+        for p in self.procs:
+            try:
+                p.wait(timeout=60)
+            except Exception:
+                p.kill()
+        for f in self.out:
+            f.close()
+        self.procs, self.inp, self.out = [], [], []
+
+
 def _fd_worker_main():
-    """Entry point of a Newton FD worker subprocess: argv[1] = pickled task; writes result.pkl next to it."""
+    """Entry point of a Newton FD worker process: argv = task.pkl, worker directory, command fd, result fd.
+    Commands: ("base", statefile) restarts from the statefile, re-solves (to minimize_tol) and evaluates the base
+    residual; ("col", j, pert) returns ("col", j, residual(base + pert) - base residual, (base restart seconds or
+    None, column seconds, column iterations)); ("stop",) exits."""
+    import os
     import pickle
     import sys
+    import traceback
 
-    path = Path(sys.argv[1])
-    out = _fd_worker(pickle.loads(path.read_bytes()))
-    (path.parent / "result.pkl").write_bytes(pickle.dumps(out))
+    params, coil_set, blend_depth, minimize_tol, maxIter, digits = pickle.loads(
+        Path(sys.argv[1]).read_bytes()
+    )
+    wdir = Path(sys.argv[2])
+    inp = os.fdopen(int(sys.argv[3]), "rb")
+    out = os.fdopen(int(sys.argv[4]), "wb")
+    state, r0 = None, None
+    nbase = 0
+    try:
+        while True:
+            try:
+                msg = pickle.load(inp)
+            except EOFError:
+                break
+            if msg[0] == "stop":
+                break
+            if msg[0] == "base":
+                nbase += 1  # binding the new state releases the previous one (with_binding)
+                rundir = wdir / f"base_{nbase:03d}"
+                rundir.mkdir(parents=True, exist_ok=True)
+                state = MinimizationState.new(
+                    params,
+                    rundir=rundir,
+                    statefile=msg[1],
+                    redirect_stdout=True,
+                    stdout_path=rundir / "stdout.txt",
+                )
+                t_base = time.time()
+                with chdir(rundir):
+                    state.reset_descent()
+                    state.solve(logfinaliter=False, maxIter=maxIter, minimize_tol=minimize_tol)
+                    state._checkpoint_dofs()
+                    r0 = _boundary_residual(state, coil_set, digits)[0]
+                t_base = time.time() - t_base
+            elif msg[0] == "col":
+                _, j, pert = msg
+                t_col, it0 = time.time(), state.get_iterations()
+                with chdir(state.rundir):
+                    if not _move_and_solve(state, pert, blend_depth, minimize_tol, maxIter):
+                        raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
+                    col = _boundary_residual(state, coil_set, digits)[0] - r0
+                info = (t_base, time.time() - t_col, state.get_iterations() - it0)
+                t_base = None  # reported with the first column after a base restart
+                pickle.dump(("col", j, col, info), out)
+                out.flush()
+    except Exception:
+        traceback.print_exc()
+        try:
+            pickle.dump(("error", traceback.format_exc().splitlines()[-1]), out)
+            out.flush()
+        except OSError:
+            pass
+        sys.exit(1)
 
 
 def _boundary_mode_list(state: MinimizationState):
