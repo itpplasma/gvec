@@ -21,7 +21,7 @@ USE MODgvec_Globals ,ONLY: wp,Unit_stdOut
 USE MODgvec_Globals ,ONLY: MPIRoot
 #endif
 USE MODgvec_sBase   ,ONLY: t_sbase,sbase_new
-USE MODgvec_fBase   ,ONLY: t_fbase
+USE MODgvec_fBase   ,ONLY: t_fbase,fBase_block_size
 USE MODgvec_sGrid   ,ONLY: t_sgrid
 IMPLICIT NONE
 
@@ -205,7 +205,7 @@ IMPLICIT NONE
   INTEGER                      :: nGP_str,nGP_end,nElems_str,nElems_end
 
   !matrix matrix version: first s then f
-  INTEGER                      :: i,j,iElem,iMode,iGP
+  INTEGER                      :: i,j,iElem,iMode,ib,g0,g1,bs
   REAL(wp)                     :: y_tmp(sf%s%nGP_str:sf%s%nGP_end,sf%f%modes)
 !===================================================================================================================================
 
@@ -251,11 +251,14 @@ IMPLICIT NONE
 
   __PERFON('eval_f')
 
+  bs=fBase_block_size(nGP_end-nGP_str+1)
 !$OMP PARALLEL DO        &
-!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP)
-  DO iGP=nGP_str,nGP_end
-    y_IP_GP(:,iGP)=sf%f%evalDOF_IP(deriv(2),y_tmp(iGP,:))
-  END DO !iGP
+!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1)
+  DO ib=1,(nGP_end-nGP_str+bs)/bs
+    g0=nGP_str+(ib-1)*bs
+    g1=MIN(g0+bs-1,nGP_end)
+    CALL sf%f%evalDOF_IP_multi(deriv(2),g1-g0+1,y_tmp(g0:g1,:),y_IP_GP(:,g0:g1))
+  END DO !ib
 !$OMP END PARALLEL DO
   __PERFOFF('eval_f')
 
@@ -288,7 +291,7 @@ SUBROUTINE base_evalDOF_all(sf,DOFs,y_IP_GP,dy_dthet_IP_GP,dy_dzeta_IP_GP)
     INTEGER                      :: nGP_str,nGP_end,nElems_str,nElems_end
 
     !matrix matrix version: first s then f
-    INTEGER                      :: i,j,iElem,iMode,iGP
+    INTEGER                      :: i,j,iElem,iMode,ib,g0,g1,bs
     REAL(wp)                     :: y_tmp(sf%s%nGP_str:sf%s%nGP_end,sf%f%modes)
   !===================================================================================================================================
 
@@ -319,28 +322,35 @@ SUBROUTINE base_evalDOF_all(sf,DOFs,y_IP_GP,dy_dthet_IP_GP,dy_dzeta_IP_GP)
     __PERFOFF('eval_s')
 
     __PERFON('eval_f')
+    bs=fBase_block_size(nGP_end-nGP_str+1)
     IF(PRESENT(y_IP_GP))THEN
     !$OMP PARALLEL DO        &
-    !$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP)
-      DO iGP=nGP_str,nGP_end
-        y_IP_GP(:,iGP)=sf%f%evalDOF_IP(0,y_tmp(iGP,:))
-      END DO !iGP
+    !$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1)
+      DO ib=1,(nGP_end-nGP_str+bs)/bs
+        g0=nGP_str+(ib-1)*bs
+        g1=MIN(g0+bs-1,nGP_end)
+        CALL sf%f%evalDOF_IP_multi(0,g1-g0+1,y_tmp(g0:g1,:),y_IP_GP(:,g0:g1))
+      END DO !ib
     !$OMP END PARALLEL DO
     END IF
     IF(PRESENT(dy_dthet_IP_GP))THEN
     !$OMP PARALLEL DO        &
-    !$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP)
-      DO iGP=nGP_str,nGP_end
-        dy_dthet_IP_GP(:,iGP)=sf%f%evalDOF_IP(DERIV_THET,y_tmp(iGP,:))
-      END DO !iGP
+    !$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1)
+      DO ib=1,(nGP_end-nGP_str+bs)/bs
+        g0=nGP_str+(ib-1)*bs
+        g1=MIN(g0+bs-1,nGP_end)
+        CALL sf%f%evalDOF_IP_multi(DERIV_THET,g1-g0+1,y_tmp(g0:g1,:),dy_dthet_IP_GP(:,g0:g1))
+      END DO !ib
     !$OMP END PARALLEL DO
     END IF
     IF(PRESENT(dy_dzeta_IP_GP))THEN
     !$OMP PARALLEL DO        &
-    !$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP)
-      DO iGP=nGP_str,nGP_end
-        dy_dzeta_IP_GP(:,iGP)=sf%f%evalDOF_IP(DERIV_ZETA,y_tmp(iGP,:))
-      END DO !iGP
+    !$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1)
+      DO ib=1,(nGP_end-nGP_str+bs)/bs
+        g0=nGP_str+(ib-1)*bs
+        g1=MIN(g0+bs-1,nGP_end)
+        CALL sf%f%evalDOF_IP_multi(DERIV_ZETA,g1-g0+1,y_tmp(g0:g1,:),dy_dzeta_IP_GP(:,g0:g1))
+      END DO !ib
     !$OMP END PARALLEL DO
     END IF
 

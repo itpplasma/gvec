@@ -559,6 +559,7 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
   USE MODgvec_MHD3D_Vars,    ONLY : X1_BC_type,X2_BC_type,LA_BC_type
   USE MODgvec_MHD3D_Vars,    ONLY : FreeBoundary, Force_b_X1, Force_b_X2 ! free boundary vars
   USE MODgvec_sol_var_MHD3D, ONLY : t_sol_var_MHD3D
+  USE MODgvec_fBase,         ONLY : fBase_block_size
   IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT VARIABLES
@@ -573,7 +574,9 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! LOCAL VARIABLES
   INTEGER   :: ibase,nBase,iMode,modes,iGP,i_mn,Deg,iElem,modes_str,modes_end,iRank,offset_modes(0:nRanks)
-  REAL(wp)  :: w_GP_IP,p_mu_0
+  REAL(wp)  :: p_mu_0
+  INTEGER   :: ib,g0,g1,bs
+  REAL(wp)  :: w_blk(32) !! weights of one block of radial points (fBase_block_size <= 32)
   REAL(wp)  ::    F_X1_GP_IP(nGP_str:nGP_end,1:X1_base%f%modes)
   REAL(wp)  ::  F_X1ds_GP_IP(nGP_str:nGP_end,1:X1_base%f%modes)
   REAL(wp)  ::    F_X2_GP_IP(nGP_str:nGP_end,1:X2_base%f%modes)
@@ -591,6 +594,7 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
   CALL par_Barrier(beforeScreenOut="DEBUG ENTER FORCE")
 #endif
   __PERFON('EvalForce')
+  bs=fBase_block_size(nGP_end-nGP_str+1)
   IF(callEvalAux) THEN
     CALL EvalAux(dofs_in,JacCheck)
   END IF
@@ -670,14 +674,16 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
 
   __PERFON('fbase')
 !$OMP PARALLEL DO &
-!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP,w_GP_IP)
-  DO iGP=nGP_str,nGP_end
-    w_GP_IP=w_GP(iGP)*dthet_dzeta
-    CALL X1_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY(     :,iGP),F_X1_GP_IP(  iGP,:))
-    CALL X1_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_THET,coefY_thet(:,iGP),F_X1_GP_IP(  iGP,:))!d/dthet
-    CALL X1_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_ZETA,coefY_zeta(:,iGP),F_X1_GP_IP(  iGP,:))!d/dzeta
-    CALL X1_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY_s(   :,iGP),F_X1ds_GP_IP(iGP,:))
-  END DO !iGP
+!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1,w_blk)
+  DO ib=1,(nGP_end-nGP_str+bs)/bs
+    g0=nGP_str+(ib-1)*bs
+    g1=MIN(g0+bs-1,nGP_end)
+    w_blk(1:g1-g0+1)=w_GP(g0:g1)*dthet_dzeta
+    CALL X1_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY(     :,g0:g1),F_X1_GP_IP(  g0:g1,:))
+    CALL X1_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_THET,g1-g0+1,coefY_thet(:,g0:g1),F_X1_GP_IP(  g0:g1,:))!d/dthet
+    CALL X1_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_ZETA,g1-g0+1,coefY_zeta(:,g0:g1),F_X1_GP_IP(  g0:g1,:))!d/dzeta
+    CALL X1_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY_s(   :,g0:g1),F_X1ds_GP_IP(g0:g1,:))
+  END DO !ib
 !$OMP END PARALLEL DO
   __PERFOFF('fbase')
 
@@ -760,14 +766,16 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
 
   __PERFON('fbase')
 !$OMP PARALLEL DO &
-!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP,w_GP_IP)
-  DO iGP=nGP_str,nGP_end
-    w_GP_IP = w_GP(iGP)*dthet_dzeta
-    CALL X2_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY(     :,iGP),F_X2_GP_IP(  iGP,:))
-    CALL X2_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_THET,coefY_thet(:,iGP),F_X2_GP_IP(  iGP,:))!d/dthet
-    CALL X2_base%f%projectIPtoDOF(.TRUE. ,w_GP_IP,DERIV_ZETA,coefY_zeta(:,iGP),F_X2_GP_IP(  iGP,:))!d/dzeta
-    CALL X2_base%f%projectIPtoDOF(.FALSE.,w_GP_IP,         0,coefY_s(   :,iGP),F_X2ds_GP_IP(iGP,:))
-  END DO !iGP
+!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1,w_blk)
+  DO ib=1,(nGP_end-nGP_str+bs)/bs
+    g0=nGP_str+(ib-1)*bs
+    g1=MIN(g0+bs-1,nGP_end)
+    w_blk(1:g1-g0+1)=w_GP(g0:g1)*dthet_dzeta
+    CALL X2_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY(     :,g0:g1),F_X2_GP_IP(  g0:g1,:))
+    CALL X2_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_THET,g1-g0+1,coefY_thet(:,g0:g1),F_X2_GP_IP(  g0:g1,:))!d/dthet
+    CALL X2_base%f%projectIPtoDOF_multi(.TRUE. ,w_blk,DERIV_ZETA,g1-g0+1,coefY_zeta(:,g0:g1),F_X2_GP_IP(  g0:g1,:))!d/dzeta
+    CALL X2_base%f%projectIPtoDOF_multi(.FALSE.,w_blk,         0,g1-g0+1,coefY_s(   :,g0:g1),F_X2ds_GP_IP(g0:g1,:))
+  END DO !ib
 !$OMP END PARALLEL DO
   __PERFOFF('fbase')
   __PERFON('sbase')
@@ -814,12 +822,15 @@ SUBROUTINE EvalForce(dofs_in,callEvalAux,JacCheck,F_MHD3D,noBC)
   __PERFON('fbase')
 !   coefY_zeta(i_mn,iGP)= w_GP_IP*sJ_bcov_thet(i_mn,iGP)
 !   coefY_thet(i_mn,iGP)=-w_GP_IP*sJ_bcov_zeta(i_mn,iGP)
-!$OMP PARALLEL DO SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(iGP,w_GP_IP)
-  DO iGP=nGP_str,nGP_end
-    w_GP_IP=PhiPrime_GP(iGP)*w_GP(iGP)*dthet_dzeta
-    CALL LA_base%f%projectIPtoDOF(.FALSE., w_GP_IP,DERIV_ZETA, sJ_bcov_thet(:,iGP),F_LA_GP_IP(iGP,:)) !d/dzeta
-    CALL LA_base%f%projectIPtoDOF(.TRUE. ,-w_GP_IP,DERIV_THET, sJ_bcov_zeta(:,iGP),F_LA_GP_IP(iGP,:)) !d/dthet
-  END DO !iGP
+!$OMP PARALLEL DO &
+!$OMP   SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(ib,g0,g1,w_blk)
+  DO ib=1,(nGP_end-nGP_str+bs)/bs
+    g0=nGP_str+(ib-1)*bs
+    g1=MIN(g0+bs-1,nGP_end)
+    w_blk(1:g1-g0+1)=PhiPrime_GP(g0:g1)*w_GP(g0:g1)*dthet_dzeta
+    CALL LA_base%f%projectIPtoDOF_multi(.FALSE., w_blk,DERIV_ZETA,g1-g0+1,sJ_bcov_thet(:,g0:g1),F_LA_GP_IP(g0:g1,:)) !d/dzeta
+    CALL LA_base%f%projectIPtoDOF_multi(.TRUE. ,-w_blk,DERIV_THET,g1-g0+1,sJ_bcov_zeta(:,g0:g1),F_LA_GP_IP(g0:g1,:)) !d/dthet
+  END DO !ib
 !$OMP END PARALLEL DO
   __PERFOFF('fbase')
   __PERFON('sbase')
