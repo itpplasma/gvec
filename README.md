@@ -14,6 +14,7 @@ It carries the following extra features and fixes until they are available
 * Long restart file paths.
 * VMEC boundary arrays with sparse (ragged) mode content.
 * Fix of the restart-boundary key in `compute_boundary_perturbation`.
+* Further free-boundary and restart fixes: plasma-current sign of the vacuum field for counter-clockwise `zeta` (G-frames), convergence statistics reset per stage, minimizer reset at the minimal step size, statefile checks, dropped boundary modes on restart, no repeated boundary perturbation from saved parameter files, statefile written into the run directory.
 * Fork CI: GitLab `CI_COMMIT_REF_SLUG` paths and private-runner jobs off by default; GitHub Actions CI.
 
 Issues for these features should be reported on [itpplasma/gvec](https://github.com/itpplasma/gvec).
