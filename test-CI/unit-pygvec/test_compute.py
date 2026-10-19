@@ -955,6 +955,50 @@ def test_integral_quantities(teststate, ev_rtz_int, quantity):
     assert ds.rho.attrs["integration_points"] == "True"
 
 
+def test_W_MHD_pressure_term_follows_fortran_energy(tmp_path):
+    """W_MHD = int (|B|^2/2 + mu0 p / (gamma - 1)) Jac as in EvalEnergy: matches the minimizer log for gvec's
+    gamma = 0 (with pressure) and has the 1/(gamma - 1) pressure dependence for gamma != 0."""
+    params = {
+        "nfp": 1,
+        "which_hmap": 1,
+        "PhiEdge": -1.0,
+        "iota": {"type": "polynomial", "coefs": [0.5]},
+        "pres": {"type": "polynomial", "coefs": [1e3]},
+        "X1_b_cos": {(0, 0): 3.0, (1, 0): 0.5},
+        "X2_b_sin": {(1, 0): 0.5},
+        "X1_a_cos": {(0, 0): 3.0},
+        "X1_mn_max": [1, 0],
+        "X2_mn_max": [1, 0],
+        "LA_mn_max": [1, 0],
+        "sgrid_nElems": 2,
+        "X1X2_deg": 3,
+        "LA_deg": 3,
+        "minimize_tol": 1e-5,
+        "totalIter": 2000,
+    }
+    run = gvec.run(params, runpath=tmp_path / "run")
+    state = run.state
+    W_fortran = run.diagnostics_minimizer.W_MHD.values[-1]
+
+    def evaluate(gamma=None):
+        ds = Evaluations(state=state, rho="int", theta="int", zeta="int")
+        if gamma is not None:
+            ds["gamma"] = gamma
+        compute(ds, "W_MHD", "p", "Jac", state=state)
+        return ds
+
+    ds0 = evaluate()
+    assert float(ds0.gamma) == 0.0
+    assert float(ds0.p.max()) > 0.0
+    np.testing.assert_allclose(ds0.W_MHD, W_fortran, rtol=1e-6)
+
+    gamma = 5 / 3
+    ds = evaluate(gamma)
+    mu0_pJ = float(ds.mu0) * volume_integral(ds.p * ds.Jac)
+    W_mag = ds0.W_MHD + mu0_pJ  # int |B|^2 / 2 Jac, from gamma = 0: W = W_mag - mu0 int p Jac
+    np.testing.assert_allclose(ds.W_MHD, W_mag + mu0_pJ / (gamma - 1), rtol=1e-10)
+
+
 def test_iota_curr(teststate, ev_rtz_int):
     ds = ev_rtz_int
     compute(ds, "iota", "iota_curr", "iota_geom", state=teststate)
