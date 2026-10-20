@@ -22,6 +22,8 @@ try:
         boundary_coefficients,
         boundary_fields,
         boundary_symmetry_defect,
+        full_boundary_residual_norm,
+        midplane_ray_radii,
         newton_converged,
         normal_field_ratio,
         plasma_volume,
@@ -34,6 +36,13 @@ except ImportError:
 
 
 DATA = Path(__file__).parents[1] / "data"
+
+# Discrete 9x9 equilibrium, not an extrapolation to infinite resolution.
+STELLARATOR_VOLUME = 13.246488296127731
+STELLARATOR_RADII = (
+    (3.3472421336127196, 4.580535401481552),
+    (3.7628549963566575, 4.305413720225191),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -109,8 +118,7 @@ def _run(parameters, coils, path, restartstate=None):
     return run, log
 
 
-@pytest.fixture
-def stellarator(tmp_path):
+def _stellarator_parameters():
     p = _parameters()
     p.update(
         nfp=2,
@@ -123,7 +131,30 @@ def stellarator(tmp_path):
         X1_mn_max=[2, 2],
         X2_mn_max=[2, 2],
         LA_mn_max=[2, 2],
+        fac_nyq=4,  # 9 x 9 native boundary grid; resolution accuracy is tested separately.
+        totalIter=1000000,
+        maxIter=50000,
+        minimize_tol=1e-7,
     )
+    # The old target=1e-2 accepted one update. Resolve the interior/current fit
+    # before differentiating the boundary force and require absolute convergence.
+    p["picard_current"].update(iota_tol=1e-7, max_updates=12)
+    p["free_boundary"].update(
+        updates=40,
+        tolerance=1e-12,
+        newton_gtol=1e-5,
+        newton_rtol=0.0,
+        newton_xtol=1e-7,
+        newton_fd_step=1e-4,
+        newton_noise_step=1e-7,
+        newton_workers=3,
+    )
+    return p
+
+
+@pytest.fixture
+def stellarator(tmp_path):
+    p = _stellarator_parameters()
     coils = CoilSet.load(DATA / "ellipstell-coils.nc")
     run, log = _run(p, coils, tmp_path / "stellarator")
     return run, log, coils
@@ -168,8 +199,8 @@ def gframe(tmp_path):
     return run, log, coils
 
 
-def _check_physics(run, log, coils, pressure_tolerances=(0.03, 0.08)):
-    f = boundary_fields(run.state, coils, ntheta=48, nzeta=32)
+def _check_physics(run, log, coils, pressure_tolerances=(0.03, 0.08), grid=(48, 32)):
+    f = boundary_fields(run.state, coils, ntheta=grid[0], nzeta=grid[1])
     # Conservative BIEST bound: 100 times its requested 10**(-8) relative accuracy.
     assert normal_field_ratio(f) < 100 * 10.0**-8
     rms, maximum = pressure_balance_residual(f)
@@ -186,21 +217,86 @@ def _check_physics(run, log, coils, pressure_tolerances=(0.03, 0.08)):
     return f
 
 
-def test_free_boundary_stellarator_real_coils(stellarator, record_property):
-    run, log, coils = stellarator
-    fields = _check_physics(run, log, coils)
-    assert abs(fields.I_tor) < 1e-2
+def _record_stellarator(run, coils, tmp_path, record_property):
     volume = plasma_volume(run.state)
-    # R00 depends on the boundary parameterization. Reference for the complete
-    # X1/X2 trace basis and translation-preserving slide gauge; retain the 0.5 mm
-    # regression band. The independent field/pressure/symmetry checks above are
-    # the physical acceptance criteria.
+    radii = midplane_ray_radii(run.state, [0.0, np.pi / run.state.nfp])
+    full_residual = full_boundary_residual_norm(run.state, coils, tmp_path / "native")
     record_property("volume", volume)
-    R00 = run.state.parameters["X1_b_cos"][(0, 0)]
-    assert R00 == pytest.approx(3.9885406108215005, abs=5e-4)
-    record_property("R00", R00)
+    record_property("volume_delta_9x9", volume - STELLARATOR_VOLUME)
+    for i, section in enumerate(("zero", "half_period")):
+        for j, side in enumerate(("inboard", "outboard")):
+            record_property(f"R_{section}_{side}", radii[i, j])
+            record_property(
+                f"R_delta_9x9_{section}_{side}", radii[i, j] - STELLARATOR_RADII[i][j]
+            )
+    record_property("full_boundary_residual", full_residual)
+    record_property("projected_residual", run.gnorm)
+    record_property("interior_force", run.max_force)
     record_property("newton_updates", len(run.newton_history))
+    return volume, radii, full_residual
+
+
+def test_free_boundary_stellarator_real_coils(stellarator, tmp_path, record_property):
+    run, log, coils = stellarator
+    assert tuple(run.state.get_integration_points()[i] for i in (2, 4)) == (9, 9)
+    volume, radii, full_residual = _record_stellarator(run, coils, tmp_path, record_property)
+    # Native stopping flag alone also accepts target/step convergence. Require
+    # absolute |g| convergence AND every native boundary force component.
+    assert newton_converged(log), log.messages[-20:]
+    assert log.any("Newton free boundary: |g| below newton_gtol.")
+    assert run.gnorm < 1e-5
+    assert run.max_force < 1e-7
+    # Measured full norms: 9.25e-6 (9x9), 1.86e-5 (tighter continuation).
+    # Develop's projected equilibrium leaves 9.50e-3 in the full vector.
+    assert full_residual < 2e-5, full_residual
+    # Independent 96x64 measurements: 0.0334% RMS / 0.1054% max; these bounds
+    # allow 0.06% / 0.18%, rather than the former 3% / 8%.
+    fields = _check_physics(run, log, coils, pressure_tolerances=(6e-4, 1.8e-3), grid=(96, 64))
+    assert abs(fields.I_tor) < 1e-2
+    # Saved fresh/continued states differ by 0.143 mm on these rays and 2.85e-4 m^3.
+    # These bands allow solver state spread, not the much larger resolution drift.
+    assert volume == pytest.approx(STELLARATOR_VOLUME, rel=0, abs=1e-3)
+    np.testing.assert_allclose(radii, STELLARATOR_RADII, rtol=0, atol=3e-4)
     record_property("pressure_rms", pressure_balance_residual(fields)[0])
+    record_property("pressure_max", pressure_balance_residual(fields)[1])
+
+
+class ResolutionNotConverged(AssertionError):
+    """The finer boundary quadrature has not reached a discrete equilibrium."""
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    raises=ResolutionNotConverged,
+    reason=(
+        "Open resolution dependence: measured 17x17 |g|=2.38e-4, |F_b|=2.39e-4 after "
+        "11 accepted updates (budget 12) and seven FD Jacobians, above |g|<1e-5. "
+        "Record geometry deltas before failing; convergence must become a strict XPASS."
+    ),
+)
+def test_free_boundary_stellarator_resolution(tmp_path, record_property):
+    p = _stellarator_parameters()
+    # Refine the boundary quadrature only, retaining the same Fourier/radial
+    # space, so this exposes quadrature dependence before a spectral study.
+    p["fac_nyq"] = 8
+    p["free_boundary"]["updates"] = 12
+    coils = CoilSet.load(DATA / "ellipstell-coils.nc")
+    run, log = _run(p, coils, tmp_path / "stellarator_17x17")
+    assert tuple(run.state.get_integration_points()[i] for i in (2, 4)) == (17, 17)
+    _, _, full_residual = _record_stellarator(run, coils, tmp_path, record_property)
+    fields = boundary_fields(run.state, coils, ntheta=96, nzeta=64)
+    rms, maximum = pressure_balance_residual(fields)
+    record_property("pressure_rms", rms)
+    record_property("pressure_max", maximum)
+    if not newton_converged(log) or run.gnorm >= 1e-5 or full_residual >= 2e-5:
+        raise ResolutionNotConverged(
+            f"17x17 quadrature after {len(run.newton_history)} updates: "
+            f"|g|={run.gnorm:.6g}, |F_b|={full_residual:.6g}; "
+            f"native stop messages: {log.messages[-10:]}"
+        )
+    assert run.max_force < 1e-7
+    _check_physics(run, log, coils, pressure_tolerances=(6e-4, 1.8e-3), grid=(96, 64))
 
 
 def test_free_boundary_gframe_nonzero_current(gframe, record_property):

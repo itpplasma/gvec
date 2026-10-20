@@ -60,6 +60,23 @@ def test_winding_number_axisymmetric(state):
     assert state.clockwise_zeta
 
 
+def test_midplane_rays_ignore_poloidal_parameterization(state):
+    from free_boundary_oracles import midplane_ray_radii
+
+    class Reparameterized:
+        parameters = state.parameters
+
+        def evaluate(self, *args, theta, **kwargs):
+            theta = np.asarray(theta)
+            return state.evaluate(*args, theta=theta + 0.37 + 0.2 * np.sin(theta), **kwargs)
+
+    expected = [[R0 - A0, R0 + A0]] * 2
+    for surface in (state, Reparameterized()):
+        np.testing.assert_allclose(
+            midplane_ray_radii(surface, [0.0, np.pi]), expected, rtol=0, atol=1e-12
+        )
+
+
 def test_phi_edge_from_coils_axisymmetric(state):
     current = 1e6
     phi = get_phi_edge_from_coils(state, _axis_wire(current))

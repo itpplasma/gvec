@@ -122,6 +122,7 @@ addopts = [
     "--import-mode=importlib",
 ]
 markers = [
+    "slow: mark resolution studies and other tests outside the fast CI budget",
     "example: mark test as a example, which are all tests specified in `test-CI/examples`, executed in folder `rundir/example`",
     "restart: mark test as a restart (deduced from example folder name). Needs the example to be run first!",
     "shortrun: mark test as a short run  (executed in folder `rundir/shortrun`, overwrites parameters: `testlevel=-1` and `MaxIter=1`)",

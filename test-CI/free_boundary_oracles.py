@@ -1,7 +1,7 @@
 """Independent checks of a converged free-boundary state, shared by the real-case free-boundary tests.
 
-All fields are evaluated on the cell-centred grid of one field period that GVEC and BIEST use for the boundary
-force, theta_i = (i + 1/2) 2 pi / nt, zeta_j = (j + 1/2) 2 pi / (nfp nz).
+Fields use the same cell-centred convention as GVEC/BIEST, with independently chosen resolution:
+theta_i = (i + 1/2) 2 pi / nt, zeta_j = (j + 1/2) 2 pi / (nfp nz), over one field period.
 """
 
 import logging
@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.constants import mu_0
+from scipy.optimize import brentq
 
 
 @dataclass
@@ -111,6 +112,60 @@ def plasma_volume(state, n=64):
         axis=0,
     )
     return abs((x * dA).sum()) / 3 * (2 * np.pi / n) * (2 * np.pi / state.nfp / n) * state.nfp
+
+
+def midplane_ray_radii(state, zeta):
+    """Inboard/outboard R [m] at fixed cylindrical rays (zeta, Z=0).
+
+    For which_hmap=1, zeta fixes the cylindrical angle (with the state's sign).
+    Find intersections in physical space rather than assuming theta=0 or pi;
+    tangential reparameterization then leaves the result unchanged.
+    """
+    assert state.parameters["which_hmap"] == 1
+    theta = np.linspace(0, 2 * np.pi, 129)
+    radii = []
+    for angle in np.atleast_1d(zeta):
+
+        def position(t):
+            return (
+                state.evaluate("pos", rho=1.0, theta=t, zeta=angle)
+                .pos.isel(rad=0, tor=0)
+                .transpose("pol", "xyz")
+                .values
+            )
+
+        height = position(theta)[:, 2]
+        roots = [theta[i] for i in range(theta.size - 1) if abs(height[i]) < 1e-13]
+        for i in np.flatnonzero(height[:-1] * height[1:] < 0):
+            roots.append(
+                brentq(lambda t: position(t)[0, 2], theta[i], theta[i + 1], xtol=1e-13)
+            )
+        assert len(roots) >= 2, f"Expected inboard/outboard intersections at zeta={angle}"
+        xyz = position(roots)
+        R = np.hypot(xyz[:, 0], xyz[:, 1])
+        radii.append([R.min(), R.max()])
+    return np.asarray(radii)
+
+
+def full_boundary_residual_norm(state, coils, rundir, digits=8):
+    """Recompute the complete native boundary force, without a Newton projection.
+
+    Runs return a read-only State. Rebind its saved equilibrium as a native
+    MinimizationState to evaluate every allowed X1/X2 boundary force component.
+    """
+    from gvec.core.minimize import MinimizationState
+    from gvec.core.run.free_boundary import _boundary_residual
+
+    rundir.mkdir(parents=True, exist_ok=True)
+    native = MinimizationState.new(
+        state.parameters,
+        rundir=rundir,
+        statefile=state.statefile,
+        redirect_stdout=True,
+        stdout_path=rundir / "stdout.txt",
+    )
+    residual, _, _ = _boundary_residual(native, coils, digits)
+    return float(np.linalg.norm(residual))
 
 
 class LogRecorder(logging.Handler):
