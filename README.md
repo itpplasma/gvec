@@ -15,6 +15,7 @@ It carries the following extra features and fixes until they are available
 * VMEC boundary arrays with sparse (ragged) mode content.
 * Fix of the restart-boundary key in `compute_boundary_perturbation`.
 * Further free-boundary and restart fixes: plasma-current sign of the vacuum field for counter-clockwise `zeta` (G-frames), convergence statistics reset per stage, minimizer reset at the minimal step size, statefile checks, dropped boundary modes on restart, no repeated boundary perturbation from saved parameter files, statefile written into the run directory.
+* Free-boundary Newton: complete X1/X2 normal basis (vertical motion representable), translation-preserving slide gauge, projection held fixed within a solve so the Jacobian is consistent; finite current-fit rotational transform on axis.
 * Faster free-boundary Newton: persistent finite-difference worker pool, blocked Fourier transforms, preconditioner assembly from mode-independent element matrices.
 * Further fixes: pressure energy `W_MHD` for `gamma != 0`, Newton respects `totalIter`, Broyden Jacobian kept in the rebuilt normal basis, resolution proposal after early Newton stops, `update_boundary` return value, tests isolated from the working directory and from test order.
 * Fork CI: GitLab `CI_COMMIT_REF_SLUG` paths and private-runner jobs off by default; GitHub Actions CI.
