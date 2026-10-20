@@ -445,10 +445,10 @@ def test_newton_already_converged_restart(monkeypatch):
 
 
 def test_newton_oversized_soft_step_keeps_stiff_progress(monkeypatch):
-    """A force already below gtol must not scale away the resolved correction.
+    """A weak force must not scale away the resolved correction with a relative target.
 
     The stiff error is 0.1 m and the radius is 0.05 m. The soft equation asks
-    for 1 m although its entire residual is below gtol. Scaling that Newton
+    for 1 m although its entire residual is below the force target. Scaling that Newton
     vector takes twenty steps; a bounded merit descent needs only two.
     """
     run = _toy_newton(
@@ -458,12 +458,33 @@ def test_newton_oversized_soft_step_keeps_stiff_progress(monkeypatch):
         np.ones(2),
         0.0,
         residual=lambda y: np.array([y[0], 1e-6 * (y[1] + 1.0)]),
-        newton_gtol=2e-6,
-        newton_rtol=0.0,
+        newton_gtol=0.0,
+        newton_rtol=2e-5,
         newton_xtol=0.0,
     )
     assert run.gnorm < 2e-6
     assert len(run.newton_history) <= 4
+
+
+def test_newton_damping_avoids_unneeded_soft_correction(monkeypatch):
+    """Soft force below gtol must not drive large steps along a curved stiff equation."""
+
+    def residual(y):
+        return np.array([y[0] + y[1] ** 2, 1e-6 * (y[1] + 1.0)])
+
+    run = _toy_newton(
+        monkeypatch,
+        [1e-4, 0.0],
+        np.zeros(2),
+        np.ones(2),
+        0.0,
+        residual=residual,
+        newton_gtol=2e-6,
+        newton_rtol=0.0,
+        newton_xtol=0.0,
+    )
+    assert np.linalg.norm(residual(run.state.y)) < 2e-6
+    assert len(run.newton_history) <= 8
 
 
 def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):

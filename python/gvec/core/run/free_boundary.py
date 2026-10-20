@@ -938,7 +938,20 @@ class FreeBoundaryRun(AbstractRun):
             JtJ = J.T @ J
             diagonal = np.diag(JtJ).copy()
             diagonal[diagonal == 0] = 1.0
-            return np.linalg.solve(JtJ + lam * np.diag(diagonal), -J.T @ g)
+            D = np.diag(diagonal)
+            rhs = -J.T @ g
+            dy = np.linalg.solve(JtJ + lam * D, rhs)
+            if gtol > 0.0:
+                # Avoid large corrections of soft residuals already below the
+                # requested absolute accuracy. Keep the strongest damping whose
+                # linear model still predicts half the required force norm.
+                for _ in range(16):
+                    lam = max(10.0 * lam, 1e-12)
+                    damped = np.linalg.solve(JtJ + lam * D, rhs)
+                    if np.linalg.norm(g + J @ damped) > 0.5 * gtol:
+                        break
+                    dy = damped
+            return dy
 
         for fb_update in range(1, fb_updates):
             logger.info(
