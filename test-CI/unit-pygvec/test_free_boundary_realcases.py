@@ -231,7 +231,9 @@ def gframe(tmp_path):
     coils = _gframe_coils(frame)
     initial = gvec.State.new(p, rundir=tmp_path)
     p["PhiEdge"] = gvec.coils.get_phi_edge_from_coils(initial, coils)
-    p["free_boundary"].update(tolerance=0.03, newton_max_step=0.01, newton_fd_step=1e-4)
+    # A 0.03 stop accepted a hosted-runner state with 20.6% maximum pressure
+    # imbalance, above the unchanged 20% independent bound. Continue solving.
+    p["free_boundary"].update(tolerance=0.02, newton_max_step=0.01, newton_fd_step=1e-4)
     run, log = _run(p, coils, tmp_path / "gframe")
     return run, log, coils
 
