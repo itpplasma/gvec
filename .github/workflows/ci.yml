@@ -6,6 +6,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -125,8 +126,14 @@ jobs:
         run: python -m pytest -m unit -v -rA --require-pygvec --junitxml=pytest.xml
 
   free-boundary:
+    name: ${{ github.event_name == 'workflow_dispatch' && format('free-boundary ({0})', matrix.repetition) || 'free-boundary' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Separate hosted runners exercise hardware/build roundoff as well as test order.
+        repetition: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[1,2,3]' || '[1]') }}
     env:
       # Small interior systems run faster serially; the FD pool uses all four CPUs.
       OMP_NUM_THREADS: "1"
@@ -165,7 +172,9 @@ jobs:
           if grep -q '^free_boundary *=' pyproject.toml; then spec='.[free_boundary]'; else spec='.'; fi
           python -m pip install --no-build-isolation "$spec"
       - name: Import check
-        run: python -c "import fbtools, gvec; print('fbtools', fbtools.__file__); print('gvec', gvec.__version__)"
+        run: |
+          lscpu
+          python -c "import fbtools, gvec, numpy; print('fbtools', fbtools.__file__); print('gvec', gvec.__version__); numpy.show_runtime()"
       - name: Free-boundary tests
         run: |
           set -euo pipefail
@@ -176,12 +185,21 @@ jobs:
             echo "Marked free-boundary tests in:"; echo "$marked"
             # no `|| true`: failures and "no tests collected" (exit 5) fail the job
             python -m pytest -v -rA --tb=short --require-pygvec \
-              --durations=10 -m "(free_boundary or freeboundary) and not slow" test-CI
+              --durations=10 --junitxml=free-boundary.xml -o junit_family=legacy \
+              -m "(free_boundary or freeboundary) and not slow" test-CI
           elif [ -n "$files" ]; then
             echo "Free-boundary test files:"; echo "$files"
             mapfile -t files_arr <<< "$files"
             python -m pytest -v -rA --tb=short --require-pygvec \
-              --durations=10 -m "not slow" "${files_arr[@]}"
+              --durations=10 --junitxml=free-boundary.xml -o junit_family=legacy \
+              -m "not slow" "${files_arr[@]}"
           else
             echo "::notice::No free-boundary tests on this branch; only the import check ran."
           fi
+      - name: Upload free-boundary results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: free-boundary-${{ matrix.repetition }}
+          path: free-boundary.xml
+          if-no-files-found: error

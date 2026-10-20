@@ -231,9 +231,25 @@ def gframe(tmp_path):
     coils = _gframe_coils(frame)
     initial = gvec.State.new(p, rundir=tmp_path)
     p["PhiEdge"] = gvec.coils.get_phi_edge_from_coils(initial, coils)
-    # A 0.03 stop accepted a hosted-runner state with 20.6% maximum pressure
-    # imbalance, above the unchanged 20% independent bound. Continue solving.
-    p["free_boundary"].update(tolerance=0.02, newton_max_step=0.01, newton_fd_step=1e-4)
+    # The circular start has repeated normal-trace singular values. Different
+    # BLAS kernels rotate its SVD basis, changing FD directions and clipped steps.
+    # Use fixed Fourier coordinates and resolve the interior before differencing:
+    # at minimize_tol=1e-3, halving h=1e-4 changed the Jacobian by 14.6%.
+    # Stop on the full boundary force, with margin inside the independent bounds,
+    # rather than a marginal target crossing during a 12-update solve.
+    p.update(totalIter=2000000, maxIter=200000, minimize_tol=1e-5)
+    p["picard_current"].update(iota_tol=1e-7, max_updates=32)
+    p["free_boundary"].update(
+        tolerance=1e-12,
+        updates=40,
+        newton_space="full",
+        newton_gtol=1e-4,
+        newton_rtol=0.0,
+        newton_xtol=1e-7,
+        newton_max_step=0.01,
+        newton_fd_step=1e-4,
+        newton_workers=3,
+    )
     run, log = _run(p, coils, tmp_path / "gframe")
     return run, log, coils
 
@@ -350,8 +366,13 @@ def test_free_boundary_gframe_nonzero_current(gframe, record_property):
     run, log, coils = gframe
     assert not run.state.clockwise_zeta
     f = _check_physics(run, log, coils, pressure_tolerances=(0.08, 0.2))
+    assert log.any("Newton free boundary: |g| below newton_gtol.")
+    assert run.gnorm < 1e-4
     assert f.I_tor == pytest.approx(1000.0, rel=1e-3)
     record_property("newton_updates", len(run.newton_history))
+    record_property("full_boundary_force", run.gnorm)
+    record_property("pressure_rms", pressure_balance_residual(f)[0])
+    record_property("pressure_max", pressure_balance_residual(f)[1])
 
 
 @pytest.fixture
