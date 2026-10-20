@@ -30,6 +30,11 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m pytest \
   --require-pygvec -m "not slow" test-CI/unit-pygvec/test_free_boundary_*.py
 ```
 
+The matched axisymmetric offset tests use consistent tight base and return solves
+(`minimize_tol=1e-10`, `iota_tol=1e-9`, `newton_gtol=1e-9`). Measured radial and
+vertical returns after a 10 mm shift are 1.78 µm and 1.89 µm; the acceptance budget
+is 20 µm, with more than tenfold headroom.
+
 The fast 9×9 stellarator case starts from a known boundary and recomputes the
 interior equilibrium and all fields at the original accuracy. The original
 cold-start 9×9 Newton solve and the resolution study remain available as slow tests.

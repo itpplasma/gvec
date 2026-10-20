@@ -216,8 +216,9 @@ def axisymmetric_contour(state, n=512):
 def contour_distance(a, b):
     """Symmetric distance to polygon segments, insensitive to tangential parameterization.
 
-    For these smooth ~0.5 m contours, 512 vertices give chord errors below 2e-5 m,
-    comfortably below the return tolerance. No matching of Fourier gauges is assumed.
+    For these smooth ~0.5 m contours, 512 vertices give chord errors below 2e-5 m;
+    the offset-return tests use 2048 vertices for errors below 1.2e-6 m.
+    No matching of Fourier gauges is assumed.
     """
 
     def directed(points, polygon):

@@ -1,4 +1,8 @@
-"""Newton return to a matched, current-controlled axisymmetric equilibrium."""
+"""Newton returns within 20 µm after a 10 mm shift of a matched equilibrium.
+
+Consistent tight base and return solves measured 1.78 µm radial and 1.89 µm
+vertical returns; the geometry budget leaves more than tenfold headroom.
+"""
 
 import tempfile
 from copy import deepcopy
@@ -83,14 +87,15 @@ def matched_axisymmetric_state(tmp_path, monkeypatch):
         X1X2_deg=3,
         LA_deg=3,
         totalIter=100000,
-        minimize_tol=1e-8,
-        picard_current=dict(target="iota_and_force", iota_tol=1e-7, max_updates=15),
+        # Match the base and return accuracies: a loose base shifts the reference.
+        minimize_tol=1e-10,
+        picard_current=dict(target="iota_and_force", iota_tol=1e-9, max_updates=15),
         free_boundary=dict(
             method="newton",
             updates=12,
             tolerance=1e-5,
             ramp_force_tol=False,
-            newton_gtol=1e-7,
+            newton_gtol=1e-9,
             newton_rtol=1e-6,
             newton_xtol=1e-7,
             newton_fd_step=1e-4,
@@ -99,7 +104,7 @@ def matched_axisymmetric_state(tmp_path, monkeypatch):
         ),
     )
     state = MinimizationState.new(p, rundir=tmp_path)
-    state.solve(maxIter=100000, minimize_tol=1e-8)
+    state.solve(maxIter=p["totalIter"], minimize_tol=p["minimize_tol"])
 
     # BIEST is linear in coil currents and the prescribed plasma circulation. Fit four
     # analytic circuit amplitudes to all four symmetric normal force modes of this boundary.
@@ -155,7 +160,7 @@ def matched_axisymmetric_state(tmp_path, monkeypatch):
 
 def _return_from_shift(base, direction, tmp_path, record_property):
     state, coils, p = base
-    contour = axisymmetric_contour(state)
+    contour = axisymmetric_contour(state, n=2048)
     mode = ("X1", "c", 0, 0) if direction == "R" else ("X2", "c", 0, 0)
     displacement = np.zeros_like(state._get_boundary_dofs())
     displacement[_boundary_mode_list(state).index(mode)] = 0.01
@@ -164,7 +169,7 @@ def _return_from_shift(base, direction, tmp_path, record_property):
         pytest.fail("Rigid offset made the base geometry invalid")
     translation = np.array([0.01, 0.0]) if direction == "R" else np.array([0.0, 0.01])
     np.testing.assert_allclose(
-        axisymmetric_contour(state), contour + translation, rtol=0, atol=1e-12
+        axisymmetric_contour(state, n=2048), contour + translation, rtol=0, atol=1e-12
     )
     state.save()
     parameters = deepcopy(p)
@@ -179,13 +184,14 @@ def _return_from_shift(base, direction, tmp_path, record_property):
             loglevel="INFO",
             quiet=True,
         )
-    distance = contour_distance(contour, axisymmetric_contour(run.state))
+    distance = contour_distance(contour, axisymmetric_contour(run.state, n=2048))
     record_property("return_distance_m", distance)
     record_property("newton_updates", len(run.newton_history))
     record_property("interior_iterations", run.GVEC_iter_used)
-    # Verified geometric oracle: 0.5 mm is twenty times smaller than the imposed offset;
-    # the polygon discretization error is < 0.02 mm and parameterization changes are ignored.
-    assert distance < 5e-4, (direction, distance, run.newton_history, log.messages[-12:])
+    # 20 µm is >10x the measured 1.78/1.89 µm returns and 1/500 of the 10 mm shift.
+    # At 2048 points the ~0.5 m contours have chord error <1.2 µm; tangential
+    # reparameterization is ignored. The old 1e-7 gtol gave 166–191 µm radial errors.
+    assert distance < 2e-5, (direction, distance, run.newton_history, log.messages[-12:])
     assert newton_converged(log), log.messages[-12:]
 
 
