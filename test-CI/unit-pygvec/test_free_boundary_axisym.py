@@ -166,6 +166,24 @@ def test_boundary_perturbation_and_checkpoint(tmp_path):
     np.testing.assert_array_equal(state._get_boundary_dofs(), x0)
 
 
+def test_boundary_checkpoint_restores_current_fit(tmp_path):
+    """A rejected current-controlled trial must restore its profile as well as geometry."""
+    from scipy.interpolate import make_interp_spline
+
+    state = _minimization_state(tmp_path)
+    rho = np.linspace(0.0, 1.0, 9)
+    profile = make_interp_spline(rho**2, 0.4 + 0.1 * rho**2, k=5)
+    state.iota = profile
+    initial = state.evaluate("iota", "B", rho=rho[1:], theta=0.3, zeta=0.0)
+    state._checkpoint_dofs()
+    state.iota = make_interp_spline(rho**2, 0.7 - 0.2 * rho**2, k=5)
+    state._restore_dofs()
+    restored = state.evaluate("iota", "B", rho=rho[1:], theta=0.3, zeta=0.0)
+    np.testing.assert_allclose(state.iota(rho**2), profile(rho**2), rtol=0, atol=1e-14)
+    np.testing.assert_allclose(restored.iota, initial.iota, rtol=0, atol=1e-14)
+    np.testing.assert_allclose(restored.B, initial.B, rtol=0, atol=1e-14)
+
+
 def test_update_boundary_returns_the_used_stepsize(tmp_path):
     """pygvec's update_boundary returns the free-boundary step-size (it used to return an undefined value)."""
     state = _minimization_state(tmp_path)

@@ -6,6 +6,7 @@
 
 import time
 import logging
+from copy import deepcopy
 from datetime import datetime
 from typing import Literal, Callable
 from pathlib import Path
@@ -751,13 +752,20 @@ class MinimizationState(State):
 
     @with_binding
     def _checkpoint_dofs(self):
-        """Keep an in-memory copy of the current solution for `_restore_dofs`."""
+        """Keep the solution and fitted iota profile for `_restore_dofs`."""
         _state.checkpoint_dofs()
+        self._iota_checkpoint = deepcopy(self.iota)
 
     @with_binding
     def _restore_dofs(self):
-        """Restore the solution saved by `_checkpoint_dofs`."""
+        """Restore geometry, interior DOFs and iota after a rejected Newton trial.
+
+        Current-controlled solves change iota as well as the native DOFs. Leaving
+        a trial's profile in place can make later FD columns and backtracks depend
+        on the order of preceding trials, up to the inner-solve tolerance.
+        """
         _state.restore_dofs()
+        self.iota = deepcopy(self._iota_checkpoint)
 
     @with_binding
     def get_Fnorm_boundary(self):
