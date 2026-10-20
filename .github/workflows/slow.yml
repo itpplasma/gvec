@@ -5,10 +5,6 @@ on:
   schedule:
     - cron: "30 2 * * *" # 02:30 UTC nightly; runs on the default branch
   workflow_dispatch:
-  # Temporary branch trigger to register and measure this new workflow.
-  push:
-    branches: [ci/nightly-slow-tests-20261020]
-    paths: [.github/workflows/slow.yml]
 
 concurrency:
   group: slow-${{ github.workflow }}-${{ github.ref }}
@@ -27,7 +23,8 @@ jobs:
   slow:
     if: github.repository == 'itpplasma/gvec'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # Measured on ubuntu-24.04: 27m12s including build; allow over 3x headroom.
+    timeout-minutes: 90
     env:
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
