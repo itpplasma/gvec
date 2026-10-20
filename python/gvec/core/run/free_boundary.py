@@ -870,6 +870,14 @@ class FreeBoundaryRun(AbstractRun):
         k = P.shape[1]
         J = None
         self._newton_last_fd_jacobian = None
+        if gtol > 0.0 and g_init < gtol:
+            self.gnorm = float(g_init)
+            self.xnorm = 0.0
+            self.iters_used = self.state.get_iterations()
+            self.newton_jacobian = None
+            self._update_diagnostics(*fields, 0, 0.0)
+            logger.info("Newton free boundary: |g| below newton_gtol.")
+            return 0
         # optional start Jacobian (a newton_jacobian_*.npz of a run with the same resolution and newton_space),
         # e.g. the RMP-off Jacobian for an RMP amplitude scan
         if (jac_file := fbp.get("newton_initial_jacobian")) is not None:

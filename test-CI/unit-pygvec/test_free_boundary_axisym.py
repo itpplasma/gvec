@@ -436,6 +436,14 @@ def test_newton_damping_preserves_unforced_direction(monkeypatch):
     assert run.state.y[1] == pytest.approx(0.0, rel=0, abs=1e-14)
 
 
+def test_newton_already_converged_restart(monkeypatch):
+    """A root needs no trial decrease or Jacobian, including at exactly zero force."""
+    run = _toy_newton(monkeypatch, np.zeros(2), np.zeros(2), np.ones(2), 0.0, newton_gtol=1e-8)
+    assert run.gnorm == 0.0
+    assert run.newton_history == []
+    assert run.newton_jacobian is None
+
+
 def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     """A small step is not convergence: with newton_gtol the update continues, with a rebuilt Jacobian, until |g|
     is below the level the problem reaches, and an offset start returns to the reference state."""
