@@ -879,7 +879,8 @@ class FreeBoundaryRun(AbstractRun):
             self._update_diagnostics(*fields, 0, 0.0)
             logger.info("Newton free boundary: |g| below newton_gtol.")
             return 0
-        # optional start Jacobian (a newton_jacobian_*.npz of a run with the same resolution and newton_space),
+        # optional start Jacobian (a newton_jacobian_*.npz of a run with the same resolution,
+        # newton_space and basis convention; normal-space files predating canonicalization must be rebuilt),
         # e.g. the RMP-off Jacobian for an RMP amplitude scan
         if (jac_file := fbp.get("newton_initial_jacobian")) is not None:
             J = np.load(jac_file)["J"]
@@ -1574,6 +1575,32 @@ def _boundary_mode_list(state: MinimizationState):
     return out
 
 
+def _canonical_range_basis(P):
+    """Choose coordinates from an orthonormal range, independently of its input frame.
+
+    Project the boundary-DOF coordinate axes onto the range. At each step choose
+    the largest remaining projection, taking the first axis in DOF order within
+    1e-12 of the largest squared norm. This treats roundoff-sized pivot ties
+    consistently and avoids normalizing almost dependent reference directions.
+    Twice-reorthogonalized Gram-Schmidt and a positive pivot fix the frame;
+    only the projector P P^T, not SVD/QR rotations or signs, enters the choice.
+    The number of columns is already fixed by the normal-trace rank cutoff.
+    """
+    if P.shape[0] == P.shape[1]:
+        return np.eye(P.shape[0], dtype=P.dtype)
+    projector = P @ P.T
+    basis = np.empty_like(P)
+    for k in range(P.shape[1]):
+        remaining = np.diag(projector) - np.sum(basis[:, :k] ** 2, axis=1)
+        pivot = np.flatnonzero(remaining >= remaining.max() - 1e-12)[0]
+        v = projector[:, pivot].copy()
+        for _ in range(2):
+            v -= basis[:, :k] @ (basis[:, :k].T @ v)
+        v /= np.linalg.norm(v)
+        basis[:, k] = v if v[pivot] > 0 else -v
+    return basis
+
+
 def _normal_displacement_basis(state: MinimizationState, oversample: int = 4):
     """Orthonormal boundary coefficients spanning all representable normal traces.
 
@@ -1589,7 +1616,11 @@ def _normal_displacement_basis(state: MinimizationState, oversample: int = 4):
     T^T D T is positive definite: a constant displacement cannot be tangential
     everywhere on a closed cross-section. Correcting the lift by T preserves its
     normal trace, and QR gives orthonormal columns without suppressing a physical
-    normal direction. The gauge is frozen along with P during each Newton solve.
+    normal direction. Canonicalize this final range against the boundary-DOF
+    axes: degenerate singular vectors must not set the FD directions or the
+    coordinate step box. The gauge and canonical frame are frozen along with P
+    during each Newton solve. The returned displacement scales therefore also
+    depend on the subspace rather than on the BLAS kernel's singular vectors.
     """
     modes = _boundary_mode_list(state)
     nfp = state.nfp
@@ -1625,6 +1656,7 @@ def _normal_displacement_basis(state: MinimizationState, oversample: int = 4):
         gauge = tangent.T * weights
         P -= tangent @ np.linalg.solve(gauge @ tangent, gauge @ P)
         P = np.linalg.qr(P)[0]
+    P = _canonical_range_basis(P)
     return P, np.max(np.abs(A @ P), axis=0)
 
 
