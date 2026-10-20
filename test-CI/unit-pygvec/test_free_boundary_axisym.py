@@ -422,6 +422,20 @@ def _toy_newton(
     return run
 
 
+def test_newton_damping_preserves_unforced_direction(monkeypatch):
+    """Diagonal LM damping cannot induce a displacement in a null force direction."""
+    run = _toy_newton(
+        monkeypatch,
+        [0.01, 0.0],
+        np.zeros(2),
+        np.array([1.0, 0.0]),
+        0.0,
+        newton_lm=1.0,
+    )
+    assert abs(run.state.y[0]) < 1e-6
+    assert run.state.y[1] == pytest.approx(0.0, rel=0, abs=1e-14)
+
+
 def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     """A small step is not convergence: with newton_gtol the update continues, with a rebuilt Jacobian, until |g|
     is below the level the problem reaches, and an offset start returns to the reference state."""

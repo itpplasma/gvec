@@ -927,9 +927,9 @@ class FreeBoundaryRun(AbstractRun):
 
         def lm_step(J, g, lam):
             JtJ = J.T @ J
-            D = np.diag(np.diag(JtJ)).copy()
-            D[D == 0] = 1.0
-            return np.linalg.solve(JtJ + lam * D, -J.T @ g)
+            diagonal = np.diag(JtJ).copy()
+            diagonal[diagonal == 0] = 1.0
+            return np.linalg.solve(JtJ + lam * np.diag(diagonal), -J.T @ g)
 
         for fb_update in range(1, fb_updates):
             logger.info(
