@@ -22,6 +22,21 @@ It carries the following extra features and fixes until they are available
 
 Issues for these features should be reported on [itpplasma/gvec](https://github.com/itpplasma/gvec).
 
+The free-boundary CI job excludes tests marked `slow`. With GVEC and the
+`free_boundary` extra installed, run the same fast tests locally with:
+
+```sh
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m pytest \
+  --require-pygvec -m "not slow" test-CI/unit-pygvec/test_free_boundary_*.py
+```
+
+The fast 9×9 stellarator case starts from a known boundary and recomputes the
+interior equilibrium and all fields at the original accuracy. The original
+cold-start 9×9 Newton solve and the resolution study remain available as slow tests.
+Run them explicitly with the same thread settings and
+`python -m pytest --require-pygvec -m slow test-CI/unit-pygvec/test_free_boundary_*.py`.
+The 17×17 case remains a strict expected failure for its pressure-balance bound.
+
 [![readthedocs](https://img.shields.io/badge/Read%20the%20Docs-8CA1AF?logo=readthedocs&labelColor=gray)](https://gvec.readthedocs.io)
 [![gitlab](https://img.shields.io/badge/GitLab-FC6D26?logo=gitlab&labelColor=gray)](https://gitlab.mpcdf.mpg.de/gvec-group/gvec)
 [![github-mirror](https://img.shields.io/badge/GitHub%20mirror-gray?logo=github&labelColor=gray)](https://github.com/gvec-group/gvec)

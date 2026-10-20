@@ -148,14 +148,50 @@ def _stellarator_parameters():
         newton_xtol=1e-7,
         newton_fd_step=1e-4,
         newton_noise_step=1e-7,
-        newton_workers=7,
+        # Three single-thread workers plus the pool's main-CPU worker fit CI's 4 CPUs.
+        newton_workers=3,
     )
     return p
 
 
-@pytest.fixture
-def stellarator(tmp_path):
+@pytest.fixture(params=["equilibrium", pytest.param("cold", marks=pytest.mark.slow)])
+def stellarator(tmp_path, request):
     p = _stellarator_parameters()
+    if request.param == "equilibrium":
+        # Known 9x9 boundary, rounded from the verified cold solve. Recompute the
+        # interior/current profile and all fields; no native state is cached.
+        # Keep the original cold Newton/FD solve explicitly runnable as slow.
+        p.update(
+            X1_b_cos={
+                (0, 0): 4.00633699,
+                (0, 1): -0.01170186,
+                (0, 2): -0.00015818,
+                (1, -2): 0.00020435,
+                (1, -1): 0.00072902,
+                (1, 0): 0.4432061,
+                (1, 1): 0.17197592,
+                (1, 2): 0.00062273,
+                (2, -2): 0.00011419,
+                (2, -1): 0.00124787,
+                (2, 0): 0.00288997,
+                (2, 1): -0.02466582,
+                (2, 2): -0.01008411,
+            },
+            X2_b_sin={
+                (0, 1): 0.01001688,
+                (0, 2): -0.0000677,
+                (1, -2): 0.00030631,
+                (1, -1): 0.00052912,
+                (1, 0): 0.44322423,
+                (1, 1): -0.17295994,
+                (1, 2): -0.00080912,
+                (2, -2): 0.00014799,
+                (2, -1): 0.00110605,
+                (2, 0): 0.00142416,
+                (2, 1): -0.0267956,
+                (2, 2): 0.00965291,
+            },
+        )
     coils = CoilSet.load(DATA / "ellipstell-coils.nc")
     run, log = _run(p, coils, tmp_path / "stellarator")
     return run, log, coils

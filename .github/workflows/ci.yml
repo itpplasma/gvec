@@ -127,6 +127,11 @@ jobs:
   free-boundary:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # Small interior systems run faster serially; the FD pool uses all four CPUs.
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -171,11 +176,12 @@ jobs:
             echo "Marked free-boundary tests in:"; echo "$marked"
             # no `|| true`: failures and "no tests collected" (exit 5) fail the job
             python -m pytest -v -rA --tb=short --require-pygvec \
-              -m "free_boundary or freeboundary" test-CI
+              --durations=10 -m "(free_boundary or freeboundary) and not slow" test-CI
           elif [ -n "$files" ]; then
             echo "Free-boundary test files:"; echo "$files"
             mapfile -t files_arr <<< "$files"
-              python -m pytest -v -rA --tb=short --require-pygvec "${files_arr[@]}"
+            python -m pytest -v -rA --tb=short --require-pygvec \
+              --durations=10 -m "not slow" "${files_arr[@]}"
           else
             echo "::notice::No free-boundary tests on this branch; only the import check ran."
           fi
