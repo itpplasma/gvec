@@ -132,13 +132,14 @@ def _stellarator_parameters():
         X2_mn_max=[2, 2],
         LA_mn_max=[2, 2],
         fac_nyq=4,  # 9 x 9 native boundary grid; resolution accuracy is tested separately.
-        totalIter=1000000,
-        maxIter=50000,
-        minimize_tol=1e-7,
+        totalIter=5000000,
+        maxIter=200000,
+        minimize_tol=1e-9,
     )
     # The old target=1e-2 accepted one update. Resolve the interior/current fit
     # before differentiating the boundary force and require absolute convergence.
-    p["picard_current"].update(iota_tol=1e-7, max_updates=12)
+    # Soft-direction FD signals must exceed the interior/current-fit error.
+    p["picard_current"].update(iota_tol=1e-9, max_updates=32)
     p["free_boundary"].update(
         updates=40,
         tolerance=1e-12,
@@ -147,7 +148,7 @@ def _stellarator_parameters():
         newton_xtol=1e-7,
         newton_fd_step=1e-4,
         newton_noise_step=1e-7,
-        newton_workers=3,
+        newton_workers=7,
     )
     return p
 
@@ -245,7 +246,7 @@ def test_free_boundary_stellarator_real_coils(stellarator, tmp_path, record_prop
     assert newton_converged(log), log.messages[-20:]
     assert log.any("Newton free boundary: |g| below newton_gtol.")
     assert run.gnorm < 1e-5
-    assert run.max_force < 1e-7
+    assert run.max_force < 1e-9
     # Measured full norms: 9.25e-6 (9x9), 1.86e-5 (tighter continuation).
     # Develop's projected equilibrium leaves 9.50e-3 in the full vector.
     assert full_residual < 2e-5, full_residual
@@ -295,7 +296,7 @@ def test_free_boundary_stellarator_resolution(tmp_path, record_property):
             f"|g|={run.gnorm:.6g}, |F_b|={full_residual:.6g}; "
             f"native stop messages: {log.messages[-10:]}"
         )
-    assert run.max_force < 1e-7
+    assert run.max_force < 1e-9
     _check_physics(run, log, coils, pressure_tolerances=(6e-4, 1.8e-3), grid=(96, 64))
 
 
