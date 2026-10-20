@@ -191,11 +191,13 @@ def test_free_boundary_stellarator_real_coils(stellarator, record_property):
     fields = _check_physics(run, log, coils)
     assert abs(fields.I_tor) < 1e-2
     volume = plasma_volume(run.state)
-    # Verified: repeat runs agree to <1e-10 m. The conservative 0.5 mm acceptance
-    # band is a regression threshold, not a physical accuracy estimate.
+    # R00 depends on the boundary parameterization. Reference for the complete
+    # X1/X2 trace basis and translation-preserving slide gauge; retain the 0.5 mm
+    # regression band. The independent field/pressure/symmetry checks above are
+    # the physical acceptance criteria.
     record_property("volume", volume)
     R00 = run.state.parameters["X1_b_cos"][(0, 0)]
-    assert R00 == pytest.approx(4.004386979334779, abs=5e-4)
+    assert R00 == pytest.approx(3.9885406108215005, abs=5e-4)
     record_property("R00", R00)
     record_property("newton_updates", len(run.newton_history))
     record_property("pressure_rms", pressure_balance_residual(fields)[0])

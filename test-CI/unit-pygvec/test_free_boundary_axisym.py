@@ -346,9 +346,9 @@ def _toy_newton(
     residual=None,
     **fbp,
 ):
-    """Run FreeBoundaryRun._run_newton on the residual g(y) = stiffness * e + curvature * e**2, e = y - y_ref, whose
-    zero is the reference state. The quadratic term makes the finite-difference Jacobian (step 1e-4) of the
-    soft mode stiff by 40 %, so the steps shrink geometrically while |g| is still far above zero."""
+    """Run Newton on g(y) = stiffness * e + curvature * e**2, e = y - y_ref.
+    The quadratic soft mode needs several steps; a small step alone can leave
+    the residual far above its target."""
     from gvec.core.run import free_boundary as fb
 
     k = len(y_ref)
@@ -363,9 +363,12 @@ def _toy_newton(
     run._update_diagnostics = lambda *args: None
     if basis is None:
         basis = lambda y: np.eye(k)  # noqa: E731
-    monkeypatch.setattr(
-        fb, "_normal_displacement_basis", lambda state: (basis(state.y), np.ones(k))
-    )
+
+    def normal_basis(state):
+        P = basis(state.y)
+        return P, np.ones(P.shape[1])
+
+    monkeypatch.setattr(fb, "_normal_displacement_basis", normal_basis)
 
     def toy_residual(digits):
         e = run.state.y - y_ref
@@ -415,7 +418,7 @@ def test_newton_respects_totaliter_budget(monkeypatch):
         assert run.state.iterations <= budget
         # the boundary is left at the last accepted state, not in a half-finished trial
         np.testing.assert_array_equal(run.state.y, run.state._saved)
-    # base solve (10), two full Jacobian columns (20) and the rest of the budget for the last one (5)
+    # Base solve (10), two residual evaluations (20), then the remaining budget (5).
     assert (
         _toy_newton(
             monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10, totaliter=35
@@ -424,10 +427,9 @@ def test_newton_respects_totaliter_budget(monkeypatch):
     )
 
 
-def test_newton_jacobian_follows_the_moving_basis(monkeypatch):
-    """The normal-displacement basis is rebuilt from the current boundary after every step, so the Broyden
-    Jacobian must be expressed in the new basis. Linear force K (y - y_ref) with a basis that rotates with the
-    boundary: the Jacobian handed back is P^T K P for the final basis, not for the initial one."""
+def test_newton_jacobian_keeps_the_solve_basis_fixed(monkeypatch):
+    """The projection and coordinates stay fixed throughout a Newton solve, even when
+    the geometric normal basis would rotate after moving the boundary."""
     rng = np.random.default_rng(3)
     Q = np.linalg.qr(rng.normal(size=(3, 3)))[0]
     K = Q.T @ np.diag([2e4, 1e3, 50.0]) @ Q
@@ -451,10 +453,61 @@ def test_newton_jacobian_follows_the_moving_basis(monkeypatch):
         newton_noise_step=0.0,
     )
     P0, P1 = basis(y_start), basis(run.state.y)
-    assert np.abs(P1 - P0).max() > 0.1  # the basis really moved
+    assert np.abs(P1 - P0).max() > 0.1  # recomputing the basis would change it
     J = run.newton_jacobian
-    np.testing.assert_allclose(J, P1.T @ K @ P1, rtol=1e-6, atol=1e-6 * np.abs(K).max())
+    np.testing.assert_allclose(J, P0.T @ K @ P0, rtol=1e-6, atol=1e-6 * np.abs(K).max())
     assert np.linalg.norm(run.state.y - y_ref) < 1e-6
+
+
+def test_newton_fixed_projection_with_nonzero_full_residual(monkeypatch, record_property):
+    """A residual outside the solve space must not feed back through a moving P.
+
+    The independent central difference is of g(y), not just of the full force.
+    """
+    start = np.array([0.01, -0.02, 0.0])
+    reference = np.zeros(3)
+    K = np.diag([2e4, -50.0, 1.0])  # the vertical direction is indefinite
+    calls = []
+
+    def basis(x):
+        calls.append(x.copy())
+        angle = 20 * x[0]
+        return np.array([[np.cos(angle), 0.0], [0.0, 1.0], [np.sin(angle), 0.0]])
+
+    P = basis(start)
+    residual = lambda x: K @ x + 3.0 * np.cross(P[:, 0], P[:, 1])  # noqa: E731
+    calls.clear()
+    run = _toy_newton(
+        monkeypatch,
+        start,
+        reference,
+        None,
+        None,
+        basis=basis,
+        residual=residual,
+        newton_gtol=1e-9,
+        newton_xtol=0.0,
+        newton_rtol=0.0,
+    )
+    assert len(calls) == 1
+    np.testing.assert_array_equal(calls[0], start)
+    assert np.linalg.norm(residual(run.state.y)) > 1.0
+    assert np.linalg.norm(P.T @ residual(run.state.y)) < 1e-9
+    epsilon = 1e-6
+    dg = np.column_stack(
+        [
+            (
+                P.T @ residual(run.state.y + epsilon * p)
+                - P.T @ residual(run.state.y - epsilon * p)
+            )
+            / (2 * epsilon)
+            for p in P.T
+        ]
+    )
+    record_property(
+        "dg_relative_error", np.linalg.norm(run.newton_jacobian - dg) / np.linalg.norm(dg)
+    )
+    np.testing.assert_allclose(run.newton_jacobian, dg, rtol=1e-8, atol=1e-8)
 
 
 def test_change_jacobian_basis_rectangular():

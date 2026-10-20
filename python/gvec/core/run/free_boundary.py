@@ -797,13 +797,17 @@ class FreeBoundaryRun(AbstractRun):
         F_b is evaluated after relaxing the interior and computing coils + BIEST
         on the displaced boundary. `newton_space = "full"` uses P = I.
 
-        The Jacobian dg/dy is built by forward differences with step `newton_fd_step` [m] (one interior solve and
-        one BIEST call per unknown; `newton_workers` > 1 runs them in parallel processes), updated by Broyden's
-        rule after accepted steps and rebuilt when a step is rejected. Steps are Levenberg-Marquardt regularised,
-        limited to `newton_max_step` [m] and backtracked on |g|. Unlike gradient descent on the boundary force,
-        the rate does not depend on the ratio of stiff (toroidal-field, area) and soft (poloidal-field, position
-        and shape) boundary modes, and modes that are unstable with fixed coil currents (vertical position) are
-        converged as well.
+        P is fixed throughout a Newton solve and rebuilt only between solves or
+        stages. Thus x = x_start + P y and dg/dy = P^T (dF_b/dx) P, including when
+        F_b != 0: there is no omitted moving-projection derivative. The Jacobian
+        uses central differences with step `newton_fd_step` [m] (two interior
+        solves and BIEST calls per unknown; `newton_workers` > 1 parallelises
+        them), followed by Broyden updates and rebuilds on rejected/slow steps.
+        Central differences avoid first-order truncation error in the soft modes.
+        Levenberg-Marquardt regularisation, `newton_max_step` [m] and backtracking
+        globalise the force root. The residual merit also handles indefinite
+        fixed-current directions, including the vertical saddle, without energy
+        descent.
 
         Stops when the largest normal-mode amplitude of the step is below `newton_xtol` [m], when a step smaller
         than `newton_noise_step` [m] does not decrease |g| (noise floor), when |g| fell below `newton_rtol` times its
@@ -883,14 +887,14 @@ class FreeBoundaryRun(AbstractRun):
         def fd_jacobian():
             nonlocal n_jac
             t0 = time.time()
-            perts = h * P
+            perts = h * np.column_stack((P, -P))
             if workers > 1:
                 dR = self._fd_jacobian_parallel(
                     perts, blend_depth, minimize_tol, maxIter, digits_BIEST, workers
                 )
             else:
-                dR = np.zeros((r.size, k))
-                for j in range(k):
+                dR = np.zeros((r.size, 2 * k))
+                for j in range(2 * k):
                     if (maxIter_j := iterations_left()) is None:
                         self.state._restore_dofs()
                         return None
@@ -900,7 +904,7 @@ class FreeBoundaryRun(AbstractRun):
                         raise RuntimeError(f"Newton FD Jacobian: invalid state for unknown {j}")
                     dR[:, j] = self._fb_residual(digits_BIEST)[0] - r
                 self.state._restore_dofs()
-            Jfd = P.T @ dR / h
+            Jfd = P.T @ (dR[:, :k] - dR[:, k:]) / (2 * h)
             self._newton_last_fd_jacobian = Jfd
             n_jac += 1
             logger.info(
@@ -1002,7 +1006,7 @@ class FreeBoundaryRun(AbstractRun):
                     )
                 fb_update -= 1
                 break
-            # Broyden update and new base point; the basis follows the boundary. A Broyden Jacobian that
+            # Broyden update and new base point in the same fixed coordinates. A Broyden Jacobian that
             # reduces |g| by less than newton_rebuild_ratio per step is replaced by a new FD Jacobian.
             slow = np.linalg.norm(g_new) > rebuild_ratio * np.linalg.norm(g)
             step_fresh = jac_fresh
@@ -1015,11 +1019,6 @@ class FreeBoundaryRun(AbstractRun):
             jac_fresh = False
             r, fields = r_new, fields_new
             self.state._checkpoint_dofs()
-            P_old = P
-            P, ynorm = basis()
-            if J is not None:
-                # J maps steps y to changes of g = P^T r in the basis P_old, which follows the old boundary
-                J = _change_jacobian_basis(J, P_old, P)
             g = P.T @ r
             self.xnorm = float(np.max(np.abs(sy) * ynorm))
             self.gnorm = float(np.linalg.norm(g))
@@ -1543,7 +1542,7 @@ def _normal_displacement_basis(state: MinimizationState, oversample: int = 4):
     T^T D T is positive definite: a constant displacement cannot be tangential
     everywhere on a closed cross-section. Correcting the lift by T preserves its
     normal trace, and QR gives orthonormal columns without suppressing a physical
-    normal direction.
+    normal direction. The gauge is frozen along with P during each Newton solve.
     """
     modes = _boundary_mode_list(state)
     nfp = state.nfp

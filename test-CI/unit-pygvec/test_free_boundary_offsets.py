@@ -189,16 +189,6 @@ def _return_from_shift(base, direction, tmp_path, record_property):
     assert newton_converged(log), log.messages[-12:]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "Verified: radial return stalls at 12.31 mm; free_boundary.py:883 freezes P in the "
-        "Jacobian although :979-980 changes P in g=P.T@F. A separate finite-difference "
-        "probe verifies a missing dP.T@F term. Hypothesis: this and the unfixed slide "
-        "gauge cause the soft radial mode to stall at :958-964."
-    ),
-)
 def test_free_boundary_newton_radial_return(
     matched_axisymmetric_state, tmp_path, record_property
 ):
