@@ -1,0 +1,76 @@
+# Nightly slow tests for the itpplasma/gvec fork.
+name: Slow tests
+
+on:
+  schedule:
+    - cron: "30 2 * * *" # 02:30 UTC nightly; runs on the default branch
+  workflow_dispatch:
+
+concurrency:
+  group: slow-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  MPLBACKEND: Agg
+  DISPLAY: ""
+  PYTHON_VERSION: "3.12"
+  FBTOOLS_REV: 14a5c4a7c3ff7458780edf7ebb0bd76712b44fbf
+
+jobs:
+  slow:
+    if: github.repository == 'itpplasma/gvec'
+    runs-on: ubuntu-24.04
+    # Measured on ubuntu-24.04: 27m12s including build; allow over 3x headroom.
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          # packages from CI_images/ubuntu-24 (gcc/gfortran 13) plus ninja/ccache
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build ccache pkg-config gfortran g++ git liblapack-dev libblas-dev zlib1g-dev libnetcdf-dev libnetcdff-dev libfftw3-dev
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: hendrikmuhs/ccache-action@v1.2.18
+        with:
+          key: free-boundary
+      - name: Install fbtools and GVEC (no build isolation)
+        env:
+          CMAKE_Fortran_COMPILER_LAUNCHER: ccache
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          python -m pip install scikit-build-core setuptools_scm numpy f90wrap \
+            pytest cmake ninja pybind11
+          # pip fetches the BIEST/SCTL submodules of fbtools recursively
+          python -m pip install --no-build-isolation \
+            "fbtools @ git+https://gitlab.mpcdf.mpg.de/nmpp-mhd-group/fhindenlang/fbtools.git@${FBTOOLS_REV}"
+          # use the free_boundary extra once the branch defines it
+          if grep -q '^free_boundary *=' pyproject.toml; then spec='.[free_boundary]'; else spec='.'; fi
+          python -m pip install --no-build-isolation "$spec"
+      - name: Import check
+        run: python -c "import fbtools, gvec; print('fbtools', fbtools.__file__); print('gvec', gvec.__version__)"
+      - name: Slow Python tests
+        run: >-
+          python -m pytest --require-pygvec -m slow test-CI/unit-pygvec
+          -v -rA --tb=short --durations=10 --junitxml=pytest-slow.xml
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: pytest-slow
+          path: pytest-slow.xml
+          if-no-files-found: warn
