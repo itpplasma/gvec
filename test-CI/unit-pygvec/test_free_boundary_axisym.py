@@ -160,25 +160,47 @@ def test_update_boundary_returns_the_used_stepsize(tmp_path):
     assert 0.0 < dt_out <= dt
 
 
-def test_normal_displacement_basis_circle(tmp_path):
-    """For a circle R = R0 + a cos(t), Z = a sin(t) the unit normal is (cos t, sin t): a normal displacement 1
-    changes a by 1, a normal displacement cos(t) gives dR = cos^2 t = 1/2 + cos(2t)/2, dZ = sin(2t)/2."""
+@pytest.mark.parametrize("vertical", [False, True])
+def test_normal_displacement_basis_circle(tmp_path, vertical):
+    """All allowed DOFs' normal traces survive the gauge, including rigid shifts.
+
+    The analytic circle normal is (cos(theta), sin(theta)); this oracle also
+    checks the highest product harmonic, absent from the old X1-only basis.
+    """
+    from gvec.core.minimize import MinimizationState
     from gvec.core.run.free_boundary import _boundary_mode_list, _normal_displacement_basis
 
-    state = _minimization_state(tmp_path, mn_max=2)
+    p = _params()
+    p["FreeBoundary"] = True
+    for q in ("X1", "X2", "LA"):
+        p[f"{q}_mn_max"] = [2, 0]
+    if vertical:
+        p.update(X2_sin_cos="_sincos_", X2_b_cos={(0, 0): 0.0})
+    state = MinimizationState.new(p, rundir=tmp_path)
     modes = _boundary_mode_list(state)
     P, _ = _normal_displacement_basis(state)
-    cols = [md for md in modes if md[0] == "X1"]
-    expect = {
-        ("c", 0): {("X1", "c", 1, 0): 1.0, ("X2", "s", 1, 0): 1.0},
-        ("c", 1): {("X1", "c", 0, 0): 0.5, ("X1", "c", 2, 0): 0.5, ("X2", "s", 2, 0): 0.5},
-    }
-    for (sc, m), dx in expect.items():
-        col = P[:, cols.index(("X1", sc, m, 0))]
-        want = np.zeros(len(modes))
-        for md, v in dx.items():
-            want[modes.index(md)] = v
-        np.testing.assert_allclose(col, want, atol=1e-12)
+    theta = np.arange(128) * 2 * np.pi / 128
+    A = np.column_stack(
+        [
+            (np.sin if sc == "s" else np.cos)(m * theta)
+            * (np.cos(theta) if var == "X1" else np.sin(theta))
+            for var, sc, m, _ in modes
+        ]
+    )
+    assert P.shape[1] == (7 if vertical else 4)
+    np.testing.assert_allclose(P.T @ P, np.eye(P.shape[1]), atol=1e-12)
+    np.testing.assert_allclose(A @ P @ np.linalg.lstsq(A @ P, A, rcond=1e-10)[0], A, atol=1e-12)
+    for var in ("X1", "X2") if vertical else ("X1",):
+        shift = np.zeros(len(modes))
+        shift[modes.index((var, "c", 0, 0))] = 1.0
+        np.testing.assert_allclose(P @ P.T @ shift, shift, atol=1e-12)
+    # The one exact relabelling null is (-1 + cos(2t), sin(2t)).
+    # Its derivative-metric gauge is dR_cos2 + dZ_sin2 = 0; translations are free.
+    np.testing.assert_allclose(
+        P[modes.index(("X1", "c", 2, 0))] + P[modes.index(("X2", "s", 2, 0))],
+        0,
+        atol=1e-12,
+    )
 
 
 def test_free_boundary_descent_does_not_stop_before_full_window(tmp_path):
@@ -196,8 +218,7 @@ def test_free_boundary_descent_does_not_stop_before_full_window(tmp_path):
 
 
 def test_normal_displacement_basis_3d(tmp_path):
-    """nfp=3 torus with a helical boundary: each column of P, evaluated as a boundary displacement, equals
-    phi_k(theta, zeta) times the in-plane unit normal (up to the truncation of the boundary basis)."""
+    """A helical boundary retains all representable normal traces with the right nfp."""
     from gvec.core.minimize import MinimizationState
     from gvec.core.run.free_boundary import _boundary_mode_list, _normal_displacement_basis
 
@@ -225,9 +246,20 @@ def test_normal_displacement_basis_3d(tmp_path):
                 f += c * (np.sin if sc == "s" else np.cos)(m * TH - n * 3 * ZE)
         return f
 
-    k = [md for md in modes if md[0] == "X1"].index(("X1", "c", 1, 1))
+    A = np.column_stack(
+        [
+            (
+                field(np.eye(len(modes))[:, i], "X1") * nR
+                + field(np.eye(len(modes))[:, i], "X2") * nZ
+            ).ravel()
+            for i in range(len(modes))
+        ]
+    )
+    AP = A @ P
+    np.testing.assert_allclose(AP @ np.linalg.lstsq(AP, A, rcond=1e-10)[0], A, atol=1e-10)
     phi = np.cos(TH - 3 * ZE)
-    err = np.hypot(field(P[:, k], "X1") - phi * nR, field(P[:, k], "X2") - phi * nZ).max()
+    coefs = P @ np.linalg.lstsq(AP, phi.ravel(), rcond=1e-10)[0]
+    err = np.abs(field(coefs, "X1") * nR + field(coefs, "X2") * nZ - phi).max()
     assert (
         err < 0.05
     )  # truncation of phi * n at m <= 4, |n| <= 2; a wrong zeta frequency gives O(1)

@@ -8,6 +8,7 @@ import pytest
 try:
     import numpy as np
     from scipy.optimize import root
+    from scipy.linalg import orth
 
     import gvec
     from gvec.coils import Coil, CoilSet
@@ -100,17 +101,28 @@ def matched_axisymmetric_state(tmp_path, monkeypatch):
     state = MinimizationState.new(p, rundir=tmp_path)
     state.solve(maxIter=100000, minimize_tol=1e-8)
 
-    # BIEST is linear in coil currents and the prescribed plasma circulation. Fit three
-    # analytic circuit amplitudes to the three normal force modes of this fixed boundary.
+    # BIEST is linear in coil currents and the prescribed plasma circulation. Fit four
+    # analytic circuit amplitudes to all four symmetric normal force modes of this boundary.
     # This constructs a base equilibrium without using a stored statefile or free-boundary
     # descent as the oracle for the subsequent displacement/return experiment.
-    projection, _ = _normal_displacement_basis(state)
+    full_projection, _ = _normal_displacement_basis(state)
+    symmetric = [
+        i
+        for i, (var, sc, _, _) in enumerate(_boundary_mode_list(state))
+        if var == "X1" or sc == "s"
+    ]
+    # The odd equations vanish by symmetry. The complete basis adds a fourth
+    # even shape equation; matching only the old three leaves a non-equilibrium
+    # base and confounds a return test with the correction of that base.
+    projection = full_projection @ orth(full_projection[symmetric, :].T, rcond=1e-10)
+    assert projection.shape[1] == 4
     nt, nz = state.t_n, state.z_n
     _, plasma, _, _ = _get_B2_fp(state, CoilSet(_axis_wire(0)), nt, nz, 50000.0, True, 8)
     circuits = [
         CoilSet(_axis_wire(2e6)),
         CoilSet(_vertical_pair(3)),
         CoilSet(_vertical_pair(1)),
+        CoilSet(_vertical_pair(2)),
     ]
     response = []
     for circuit in circuits:
@@ -122,11 +134,18 @@ def matched_axisymmetric_state(tmp_path, monkeypatch):
         state.set_Bext_squared((field**2).sum(axis=0).ravel())
         return projection.T @ state._eval_boundary_forces()
 
-    solution = root(residual, [1.0, 1.0, 0.0], tol=1e-10)
+    solution = root(residual, [1.0, 1.0, 0.0, 0.0], tol=1e-10)
     if not solution.success or np.max(np.abs(solution.fun)) > 1e-9:
         pytest.fail(f"Could not construct a matched base: {solution.message}, {solution.fun}")
+    # Verify all equations, including the odd ones, at the matched base.
+    np.testing.assert_allclose(full_projection.T @ state._eval_boundary_forces(), 0, atol=1e-9)
     a = solution.x
-    coils = CoilSet(_axis_wire(2e6 * a[0]) + _vertical_pair(3, a[1]) + _vertical_pair(1, a[2]))
+    coils = CoilSet(
+        _axis_wire(2e6 * a[0])
+        + _vertical_pair(3, a[1])
+        + _vertical_pair(1, a[2])
+        + _vertical_pair(2, a[3])
+    )
     fields = boundary_fields(state, coils, ntheta=48, nzeta=16)
     if pressure_balance_residual(fields)[0] > 0.01:
         pytest.fail("Matched base exceeds 1% RMS pressure imbalance on the independent grid")
@@ -186,15 +205,6 @@ def test_free_boundary_newton_radial_return(
     _return_from_shift(matched_axisymmetric_state, "R", tmp_path, record_property)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "Verified: python/gvec/core/run/free_boundary.py:1499-1506 uses only X1 modes for normal "
-        "coordinates; cosine X1 omits the sin(theta) vertical translation, despite X2 cos(0,0). "
-        "No vertical slide coordinate/gauge. Hypothesis: fixed-current vertical saddle also matters."
-    ),
-)
 def test_free_boundary_newton_vertical_return(
     matched_axisymmetric_state, tmp_path, record_property
 ):

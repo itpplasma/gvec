@@ -788,16 +788,14 @@ class FreeBoundaryRun(AbstractRun):
     ) -> int:
         """Newton iteration for the free boundary.
 
-        Unknowns: the normal displacement of the boundary, xi(theta, zeta) = sum_k y_k phi_k with the Fourier
-        functions phi_k of the X1 boundary basis; the boundary coefficients change by dx = P y, P[:, k] being the
-        boundary-basis projection of phi_k times the unit normal of the boundary curve in the zeta = const plane
-        (`newton_space = "normal"`, default). Equations: g(y) = P^T F_b = 0, the virtual work of the boundary force
-        F_b (pressure balance [[B^2/2 + mu_0 p]] in the weak form; the spectral-condensation term of the descent
-        force is left out, since its normal part is not zero and biases the shape by up to ~0.4 mm) along the
-        normal displacements. F_b is that of the interior equilibrium with the
-        displaced boundary and B_ext = coils + BIEST evaluated on the displaced boundary. With
-        `newton_space = "full"`, the unknowns are all boundary coefficients (P = I); this includes the nearly
-        singular tangential re-parametrisations, whose stiffness is only the spectral-condensation weight.
+        The boundary coefficients change by dx = P y. In `newton_space = "normal"`
+        (default), P spans every normal trace representable by the allowed X1 and
+        X2 DOFs, with tangential nulls fixed by a translation-preserving gauge;
+        see `_normal_displacement_basis`. Equations: g(y) = P^T F_b = 0, the virtual
+        work of the boundary force F_b (weak pressure balance [[B^2/2 + mu_0 p]]).
+        Spectral condensation is excluded: its normal part biases the shape.
+        F_b is evaluated after relaxing the interior and computing coils + BIEST
+        on the displaced boundary. `newton_space = "full"` uses P = I.
 
         The Jacobian dg/dy is built by forward differences with step `newton_fd_step` [m] (one interior solve and
         one BIEST call per unknown; `newton_workers` > 1 runs them in parallel processes), updated by Broyden's
@@ -1531,10 +1529,22 @@ def _boundary_mode_list(state: MinimizationState):
 
 
 def _normal_displacement_basis(state: MinimizationState, oversample: int = 4):
-    """Matrix P (n_dofs x k): column k holds the boundary coefficients of the in-plane normal displacement
-    xi = phi_k (unit normal of the boundary curve in each zeta = const plane), phi_k running over the Fourier
-    functions of the X1 boundary basis. Also returns max |phi_k| (= 1). Projection by trapezoidal quadrature on a
-    uniform grid that resolves the products exactly up to `oversample` times the maximum mode numbers."""
+    """Orthonormal boundary coefficients spanning all representable normal traces.
+
+    The sampled normal-trace map A has one column n_var*phi for EVERY allowed X1
+    and X2 DOF. Its right singular vectors identify the independent normal traces:
+    range(A P) = range(A), with tangential null directions removed. Retain singular
+    values greater than 1e-10 times the largest; this is a relative rank tolerance,
+    independent of the number of quadrature points. Return max |A P[:, k]| as the
+    normal-displacement scale of each coordinate.
+
+    With tangent null columns T, impose T^T D dx = 0, D_kk = m_k^2 + (n_k*nfp)^2.
+    D measures boundary displacement derivatives and annihilates rigid shifts.
+    T^T D T is positive definite: a constant displacement cannot be tangential
+    everywhere on a closed cross-section. Correcting the lift by T preserves its
+    normal trace, and QR gives orthonormal columns without suppressing a physical
+    normal direction.
+    """
     modes = _boundary_mode_list(state)
     nfp = state.nfp
     mmax = max(md[2] for md in modes)
@@ -1556,14 +1566,20 @@ def _normal_displacement_basis(state: MinimizationState, oversample: int = 4):
         return np.sin(arg) if sc == "s" else np.cos(arg)
 
     phis = [fun(sc, m, n) for (var, sc, m, n) in modes]
-    x1 = [i for i, md in enumerate(modes) if md[0] == "X1"]
-    P = np.zeros((len(modes), len(x1)))
-    for col, k in enumerate(x1):
-        fR, fZ = phis[k] * nR, phis[k] * nZ
-        for i, md in enumerate(modes):
-            f = fR if md[0] == "X1" else fZ
-            P[i, col] = np.sum(f * phis[i]) / np.sum(phis[i] ** 2)
-    return P, np.ones(len(x1))
+    A = np.stack(
+        [(phi * (nR if md[0] == "X1" else nZ)).ravel() for phi, md in zip(phis, modes)],
+        axis=1,
+    )
+    _, singular, vt = np.linalg.svd(A, full_matrices=False)
+    independent = singular > 1e-10 * singular[0]
+    P = vt[independent].T
+    tangent = vt[~independent].T
+    if tangent.shape[1]:
+        weights = np.array([m * m + (n * nfp) ** 2 for _, _, m, n in modes])
+        gauge = tangent.T * weights
+        P -= tangent @ np.linalg.solve(gauge @ tangent, gauge @ P)
+        P = np.linalg.qr(P)[0]
+    return P, np.max(np.abs(A @ P), axis=0)
 
 
 # ============= BIEST CALL ===========================
