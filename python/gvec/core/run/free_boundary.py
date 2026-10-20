@@ -804,8 +804,9 @@ class FreeBoundaryRun(AbstractRun):
         solves and BIEST calls per unknown; `newton_workers` > 1 parallelises
         them), followed by Broyden updates and rebuilds on rejected/slow steps.
         Central differences avoid first-order truncation error in the soft modes.
-        Levenberg-Marquardt regularisation, `newton_max_step` [m] and backtracking
-        globalise the force root. The residual merit also handles indefinite
+        Levenberg-Marquardt regularisation, a Cauchy/dogleg step limited by
+        `newton_max_step` [m], and backtracking globalise the force root. The
+        residual merit also handles indefinite
         fixed-current directions, including the vertical saddle, without energy
         descent.
 
@@ -959,7 +960,32 @@ class FreeBoundaryRun(AbstractRun):
                 dy = lm_step(J, g, lam)
                 dmax = np.max(np.abs(dy) * ynorm)
                 if dmax > max_step:
-                    dy *= max_step / dmax
+                    # A nearly unforced direction can make the Newton step huge.
+                    # Scaling the entire vector then suppresses the useful stiff
+                    # correction too. Use merit descent in physical mode units,
+                    # followed by a dogleg toward Newton within the same step box.
+                    gradient = J.T @ g
+                    descent = -gradient / ynorm**2
+                    response = J @ descent
+                    curvature = response @ response
+                    if curvature > 0.0:
+                        cauchy = descent * (-(gradient @ descent) / curvature)
+                        cmax = np.max(np.abs(cauchy) * ynorm)
+                        if cmax >= max_step:
+                            dy = cauchy * (max_step / cmax)
+                        elif np.linalg.norm(g + J @ cauchy) < np.linalg.norm(g + J @ dy):
+                            dy = cauchy
+                        else:
+                            direction = dy - cauchy
+                            moving = direction != 0.0
+                            limits = (
+                                np.sign(direction[moving]) * max_step / ynorm[moving]
+                                - cauchy[moving]
+                            ) / direction[moving]
+                            fraction = min(1.0, float(limits.min()))
+                            dy = cauchy + fraction * direction
+                    else:
+                        dy *= max_step / dmax
                 alpha = 1.0
                 for _ in range(max_backtracks):
                     if (maxIter_trial := iterations_left()) is None:

@@ -444,6 +444,28 @@ def test_newton_already_converged_restart(monkeypatch):
     assert run.newton_jacobian is None
 
 
+def test_newton_oversized_soft_step_keeps_stiff_progress(monkeypatch):
+    """A force already below gtol must not scale away the resolved correction.
+
+    The stiff error is 0.1 m and the radius is 0.05 m. The soft equation asks
+    for 1 m although its entire residual is below gtol. Scaling that Newton
+    vector takes twenty steps; a bounded merit descent needs only two.
+    """
+    run = _toy_newton(
+        monkeypatch,
+        [0.1, 0.0],
+        np.zeros(2),
+        np.ones(2),
+        0.0,
+        residual=lambda y: np.array([y[0], 1e-6 * (y[1] + 1.0)]),
+        newton_gtol=2e-6,
+        newton_rtol=0.0,
+        newton_xtol=0.0,
+    )
+    assert run.gnorm < 2e-6
+    assert len(run.newton_history) <= 4
+
+
 def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     """A small step is not convergence: with newton_gtol the update continues, with a rebuilt Jacobian, until |g|
     is below the level the problem reaches, and an offset start returns to the reference state."""
