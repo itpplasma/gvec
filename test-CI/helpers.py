@@ -240,3 +240,45 @@ def assert_stdout_no_NaN(path: str | Path = "stdout.txt"):
     with open(path) as file:
         lines = file.readlines()
         assert not any(re.search(r"NaN", line) for line in lines), "found NaN in stdout"
+
+
+def generate_cinquefoil(path: str | Path):
+    """Write the synthetic (5,2) knot from upstream GVEC MR !173 analytically."""
+    import netCDF4
+
+    nfp, nzeta = 5, 21
+    zeta = (np.arange(nfp * nzeta) + 0.5) * (2 * np.pi / (nfp * nzeta))
+    xyz = np.array(
+        [
+            np.cos(2 * zeta) + 0.1 * np.cos(3 * zeta),
+            np.sin(2 * zeta) - 0.1 * np.sin(3 * zeta),
+            0.2 * np.sin(5 * zeta),
+        ]
+    )
+    tangent = np.array(
+        [
+            -2 * np.sin(2 * zeta) - 0.3 * np.sin(3 * zeta),
+            2 * np.cos(2 * zeta) - 0.3 * np.cos(3 * zeta),
+            np.cos(5 * zeta),
+        ]
+    )
+    tangent /= np.linalg.norm(tangent, axis=0)
+    normal = np.array(
+        [
+            -4 * np.cos(2 * zeta) - 0.9 * np.cos(3 * zeta),
+            -4 * np.sin(2 * zeta) + 0.9 * np.sin(3 * zeta),
+            -5 * np.sin(5 * zeta),
+        ]
+    )
+    normal -= tangent * np.sum(tangent * normal, axis=0)
+    normal /= np.linalg.norm(normal, axis=0)
+    binormal = np.cross(tangent.T, normal.T).T
+    with netCDF4.Dataset(path, "w") as data:
+        data.createDimension("vec", 3)
+        data.createDimension("nzeta", nzeta)
+        data.createDimension("full", nfp * nzeta)
+        for name, value in [("VERSION", 301), ("NFP", nfp), ("axis/nzeta", nzeta)]:
+            data.createVariable(name, "i8").assignValue(value)
+        data.createVariable("axis/zeta(:)", "f8", ("nzeta",))[:] = zeta[:nzeta]
+        for name, value in [("xyz", xyz), ("Nxyz", normal), ("Bxyz", binormal)]:
+            data.createVariable(f"axis/{name}(::)", "f8", ("vec", "full"))[:] = value

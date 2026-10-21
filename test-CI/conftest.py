@@ -365,46 +365,9 @@ def testcaserundir(util, rundir: Path, testgroup: str, testcase: str):
         shutil.rmtree(targetdir)
     shutil.copytree(sourcedir, targetdir, symlinks=True)
     if testcase == "cinquefoil":
-        # Synthetic (5,2) knot from upstream MR !173, generated instead of stored as NetCDF.
-        import netCDF4
-        import numpy as np
+        import helpers
 
-        nfp, nzeta = 5, 21
-        zeta = (np.arange(nfp * nzeta) + 0.5) * (2 * np.pi / (nfp * nzeta))
-        xyz = np.array(
-            [
-                np.cos(2 * zeta) + 0.1 * np.cos(3 * zeta),
-                np.sin(2 * zeta) - 0.1 * np.sin(3 * zeta),
-                0.2 * np.sin(5 * zeta),
-            ]
-        )
-        tangent = np.array(
-            [
-                -2 * np.sin(2 * zeta) - 0.3 * np.sin(3 * zeta),
-                2 * np.cos(2 * zeta) - 0.3 * np.cos(3 * zeta),
-                np.cos(5 * zeta),
-            ]
-        )
-        tangent /= np.linalg.norm(tangent, axis=0)
-        normal = np.array(
-            [
-                -4 * np.cos(2 * zeta) - 0.9 * np.cos(3 * zeta),
-                -4 * np.sin(2 * zeta) + 0.9 * np.sin(3 * zeta),
-                -5 * np.sin(5 * zeta),
-            ]
-        )
-        normal -= tangent * np.sum(tangent * normal, axis=0)
-        normal /= np.linalg.norm(normal, axis=0)
-        binormal = np.cross(tangent.T, normal.T).T
-        with netCDF4.Dataset(targetdir / "cinquefoil.nc", "w") as data:
-            data.createDimension("vec", 3)
-            data.createDimension("nzeta", nzeta)
-            data.createDimension("full", nfp * nzeta)
-            for name, value in [("VERSION", 301), ("NFP", nfp), ("axis/nzeta", nzeta)]:
-                data.createVariable(name, "i8").assignValue(value)
-            data.createVariable("axis/zeta(:)", "f8", ("nzeta",))[:] = zeta[:nzeta]
-            for name, value in [("xyz", xyz), ("Nxyz", normal), ("Bxyz", binormal)]:
-                data.createVariable(f"axis/{name}(::)", "f8", ("vec", "full"))[:] = value
+        helpers.generate_cinquefoil(targetdir / "cinquefoil.nc")
     # modify parameter files for certain testgroups
     match testgroup:
         case "shortrun":

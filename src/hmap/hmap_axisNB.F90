@@ -287,7 +287,7 @@ FUNCTION hmap_axisNB_init_params(ncfile,nvisu) RESULT(sf)
       check_xhat(2,i)=MAXVAL(ABS(to_hat(2,1:sf%nzeta)-to_hat(2,sf%nzeta*(i-1)+1:sf%nzeta*i)))
       check_xhat(3,i)=MAXVAL(ABS(to_hat(3,1:sf%nzeta)-to_hat(3,sf%nzeta*(i-1)+1:sf%nzeta*i)))
     END DO
-    IF(ANY(check_xhat.GT.1.0e-10))THEN
+    IF(ANY(check_xhat.GT.1.0e-12))THEN
       DO i=2,sf%nfp
         WRITE(UNIT_stdout,'(A,I4,A,3E9.2)')'fp=1 vs fp=',i,', check_xyz=',check_xhat(1:3,i)
       END DO
