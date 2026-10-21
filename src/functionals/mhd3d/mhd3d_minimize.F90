@@ -491,23 +491,19 @@ MODULE MODgvec_MHD3D_minimize
                 vars%temp_dofs(1)%W_MHD3D=EvalEnergy(vars%temp_dofs(1),.TRUE.,vars%JacCheck)
                 IF(vars%JacCheck.LE.-1)THEN
                     vars%nstepDecreased=vars%nStepDecreased+1
-                    IF(vars%iter.GT.100) THEN
-                        CALL WriteState(vars%dofs(0),vars%iter)
-                        CALL abort(__STAMP__,&
-                                "detJ<0. This is an abort during minimization (iteration count>100), where detJ<0 occurred.",&
-                                TypeInfo="RuntimeError")
-                    END IF
                     IF(vars%nStepDecreased.GT.130) THEN
                         CALL WriteState(vars%dofs(0),vars%iter)
                         CALL abort(__STAMP__,&
-                                "detJ<0. This is an abort, since the timestep has been decreased by a factor of 1e-6 which still produces detJ<0.",&
+                                "detJ<0 after repeated timestep reductions from the last accepted state.",&
                                 RealInfo=vars%dt, TypeInfo="InitializationError")
                     END IF
                     vars%dt=0.9_wp*vars%dt
                     vars%nSkip_Jac=vars%nSkip_Jac+1
                     vars%restart_iter=.TRUE.
-                    CALL vars%dofs(0)%set_to(vars%dofs(-3)) !reset to initial state
-                    SWRITE(UNIT_stdOut,'(8X,I8,A,E11.4,A)')vars%iter,'...detJac<0, iter<=100, decrease stepsize to dt=',vars%dt,  ' and RESTART simulation!!!!!!!'
+                    ! Only temp_dofs(1) contains the invalid trial. Keep the last
+                    ! accepted map, and reset acceleration before retrying it.
+                    SWRITE(UNIT_stdOut,'(8X,I8,A,E11.4,A)')vars%iter,'...detJac<0, decrease stepsize to dt=',vars%dt, &
+                        ' and retry from last accepted state'
                 ELSE
                     !detJ>0
                     vars%deltaW=vars%temp_dofs(1)%W_MHD3D-vars%dofs(0)%W_MHD3D!should be <=0,

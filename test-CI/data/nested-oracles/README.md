@@ -23,28 +23,47 @@ It checks the independent complex-step-capable Python oracle used by this
 test against the FortSym-generated Fortran leaves. The latter's eight exact
 divergence/tension lemmas also pass at the current retained definition.
 
-[V] The native gfortran-12.2 mini-ladder at eps=0.5, delta=1/64 and
-`minimize_tol=1e-6` folds at the following iterations. All six aborts come
-from `src/functionals/mhd3d/mhd3d_minimize.F90:496`, when the predicted map
-has a nonpositive Jacobian after iteration 100.
+[V] The original cold-start solves at modes/elements 4/6/8 abort on a
+nonpositive predicted Jacobian. The minimizer now rejects that trial, keeps
+the accepted map, reduces the step and resets acceleration, including after
+iteration 100. The focused regression forces this rejection after iteration
+101 and checks subsequent progress, positive sampled Jacobians and a fixed
+boundary. This retry also existed in the fork's older perf-descent-solver
+branch; its unrelated staging/performance changes are not required here.
 
-| Fourier maximum, radial elements | Landreman, tau=0 | Issan, tau=0.4 |
+[V] Retrying prevents the immediate abort but does not solve the cold-start
+problem. Default and exact-axis starts still stall above the requested
+1e-6 force tolerance. Disabling Lambda initialization, plain gradient
+steps, strict energy decrease, cubic splines and increased quadrature did
+not establish cold-start convergence. The default initializer is in
+`src/functionals/mhd3d/mhd3d.F90:1035`; Jacobian acceptance in
+`mhd3d_evalfunc.F90:338` samples the integration grid. An independent finer
+grid detects negative Jacobians near rho=0.925 in accepted stalled states.
+
+[V] Initializing the whole interior from the analytic chart gives the
+following sampled field errors after satisfying the native 1e-6 criterion
+with gfortran 12.2. These are initialization/representation checks, not
+cold-start solver regression evidence.
+
+| Modes / radial elements | Landreman B relative RMS | Issan B relative RMS |
 |---|---:|---:|
-| 4, 4 | 11319 | 6847 |
-| 6, 6 | 8439 | 6587 |
-| 8, 8 | 8271 | 6565 |
+| 6 / 6 | 4.02e-5 | 1.55e-5 |
+| 8 / 8 | 2.06e-6 | 8.03e-7 |
+| 10 / 10 | 1.59e-7 | 3.66e-8 |
+| 12 / 12 | 1.90e-8 | 4.60e-9 |
 
-[H] The folding's mathematical/numerical root cause is unresolved. An
-independent continuum-energy probe of three admissible displacement modes
-found stationary first variations and positive curvature in that subspace;
-it does not establish stability or explain the discrete fold. Neither the
-paper nor the reference implementation is declared wrong on this evidence.
+[V] Continuum curvature probes of both early and late four-mode departure
+directions are positive at two quadratures. A broader 54-function Ritz
+probe is also positive in its tested subspace. None proves full stability.
+[H] A discrete admissibility/representation defect remains a candidate;
+the four-mode truncation is insufficient for this diagnostic ladder.
 
-[H] The proposed six-mode solved-case tolerances are provisional physical
-accuracy targets, not established regression gates. Keep the PR draft until
-the cause is resolved and a converged mini-ladder justifies the gates. A
-native small force alone is insufficient: the tests also compare field,
-surface position, rotational transform and strong force balance to the oracle.
+[H] The six-mode solved-case thresholds remain provisional physical accuracy
+targets. No converged cold-start ladder justifies solver regression gates;
+keep the PR draft. An exact-interior start must not replace the cold-start
+regression merely to pass CI. Boundary continuation from an eps=0 cold solve
+converges at its first stage but stalls at eps=0.1; a successful continuation
+recipe has not been established.
 
 [V] `surface_distance` intersects a ray from the analytic axis with the exact
 surface in the candidate's geometric-phi section. Its maximum is a sampled

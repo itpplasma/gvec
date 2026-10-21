@@ -288,7 +288,7 @@ class MinimizationState(State):
     @with_binding
     def reset_LA(self):
         logger.debug("Resetting lambda DoFs")
-        _state.reset_LA()
+        _state.reset_la()
 
     def save(self, header: str = ""):
         """Write a parameter and statefile for the current state.
