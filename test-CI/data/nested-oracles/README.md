@@ -47,10 +47,10 @@ cold-start solver regression evidence.
 
 | Modes / radial elements | Landreman B relative RMS | Issan B relative RMS |
 |---|---:|---:|
-| 6 / 6 | 4.02e-5 | 1.55e-5 |
-| 8 / 8 | 2.06e-6 | 8.03e-7 |
-| 10 / 10 | 1.59e-7 | 3.66e-8 |
-| 12 / 12 | 1.90e-8 | 4.60e-9 |
+| 6 / 6 | 3.79e-5 | 1.48e-5 |
+| 8 / 8 | 1.93e-6 | 7.72e-7 |
+| 10 / 10 | 1.52e-7 | 3.59e-8 |
+| 12 / 12 | 1.75e-8 | 4.54e-9 |
 
 [V] Continuum curvature probes of both early and late four-mode departure
 directions are positive at two quadratures. A broader 54-function Ritz
