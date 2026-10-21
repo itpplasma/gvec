@@ -180,6 +180,8 @@ class BaseTestPost:
             shutil.rmtree(targetdir)
         # copy input files from examples/testcase
         shutil.copytree(sourcedir, targetdir, symlinks=True)
+        if testcase == "cinquefoil":
+            (targetdir / "cinquefoil.nc").symlink_to(sourcerundir / "cinquefoil.nc")
         # link to statefiles from run_stage
         states = sorted(sourcerundir.glob("*State*.dat"))
         for statefile in states:

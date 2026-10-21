@@ -31,11 +31,6 @@ default_rtol_atol = dict(rtol=1e-5, atol=1e-8)
 # === FIXTURES === #
 
 
-@pytest.fixture(scope="session", params=["ellipstell_lowres", "axisNB_N2-12", "cinquefoil"])
-def testcase(request):
-    return request.param
-
-
 @pytest.fixture(scope="session")
 def teststate(testfiles):
     return State(*testfiles)
