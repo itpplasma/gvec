@@ -21,7 +21,8 @@ env:
 
 jobs:
   slow:
-    if: github.repository == 'itpplasma/gvec'
+    if: >-
+      (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.actor != 'github-merge-queue[bot]') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')) || github.event_name == 'schedule') && (github.repository == 'itpplasma/gvec')
     runs-on: ubuntu-24.04
     # Measured on ubuntu-24.04: 27m12s including build; allow over 3x headroom.
     timeout-minutes: 90
