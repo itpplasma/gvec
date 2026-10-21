@@ -23,13 +23,28 @@ It checks the independent complex-step-capable Python oracle used by this
 test against the FortSym-generated Fortran leaves. The latter's eight exact
 divergence/tension lemmas also pass at the current retained definition.
 
+[V] The native gfortran-12.2 mini-ladder at eps=0.5, delta=1/64 and
+`minimize_tol=1e-6` folds at the following iterations. All six aborts come
+from `src/functionals/mhd3d/mhd3d_minimize.F90:496`, when the predicted map
+has a nonpositive Jacobian after iteration 100.
+
+| Fourier maximum, radial elements | Landreman, tau=0 | Issan, tau=0.4 |
+|---|---:|---:|
+| 4, 4 | 11319 | 6847 |
+| 6, 6 | 8439 | 6587 |
+| 8, 8 | 8271 | 6565 |
+
+[H] The folding's mathematical/numerical root cause is unresolved. An
+independent continuum-energy probe of three admissible displacement modes
+found stationary first variations and positive curvature in that subspace;
+it does not establish stability or explain the discrete fold. Neither the
+paper nor the reference implementation is declared wrong on this evidence.
+
 [H] The proposed six-mode solved-case tolerances are provisional physical
-accuracy targets, not established regression gates. Four- and six-mode
-native gfortran-12.2 Landreman runs fold before convergence in
-`src/functionals/mhd3d/mhd3d_minimize.F90:496`. Keep the PR draft until the
-cause is resolved and a converged mini-ladder justifies the gates. A native
-small force alone is insufficient: the tests also compare field, surface
-position, rotational transform and strong force balance to the oracle.
+accuracy targets, not established regression gates. Keep the PR draft until
+the cause is resolved and a converged mini-ladder justifies the gates. A
+native small force alone is insufficient: the tests also compare field,
+surface position, rotational transform and strong force balance to the oracle.
 
 [V] `surface_distance` intersects a ray from the analytic axis with the exact
 surface in the candidate's geometric-phi section. Its maximum is a sampled
