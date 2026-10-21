@@ -109,12 +109,15 @@ def test_nested_fixed_boundary(tau, tmp_path):
 
 
 if __name__ == "__main__":
-    # A bounded cluster-only mini-ladder; CI runs just the two tests above.
-    import sys
+    # One cluster mini-ladder point per task; a failed solve cannot hide
+    # the evidence for the other symmetry or resolution.
+    import argparse
 
-    out = Path(sys.argv[1]).resolve()
-    for resolution in (6, 8, 10):
-        for tau in (0.0, 0.4):
-            work = out / f"m{resolution}-tau{tau}"
-            work.mkdir(parents=True)
-            measure(tau, resolution, work)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--resolution", type=int, required=True)
+    parser.add_argument("--tau", type=float, choices=(0.0, 0.4), required=True)
+    args = parser.parse_args()
+    work = args.output.resolve()
+    work.mkdir(parents=True)
+    measure(args.tau, args.resolution, work)
