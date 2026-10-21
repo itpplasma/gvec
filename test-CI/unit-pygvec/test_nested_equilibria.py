@@ -7,10 +7,35 @@ import time
 import numpy as np
 import pytest
 
-from nested_oracles import DELTA, EPS, field, surface_distance
+from nested_oracles import DELTA, field, surface_distance
 
 MU0 = 4 * np.pi * 1e-7
 INPUTS = Path(__file__).parents[1] / "data" / "nested-oracles"
+
+
+def test_independent_integer_oracle():
+    """Check this test's complex extension against FortSym-generated samples."""
+    samples = np.loadtxt(INPUTS / "field-reference.txt")
+    for tau in (0.0, 0.4):
+        rows = samples[samples[:, 0] == tau]
+        points = rows[:, 1:4]
+        psi, pressure, magnetic = field(points, tau)
+        np.testing.assert_allclose(
+            np.column_stack((psi, pressure, magnetic)), rows[:, 4:], rtol=0, atol=3e-13
+        )
+        db, gp = np.empty((len(points), 3, 3)), np.empty_like(points)
+        for k in range(3):
+            shifted = points.astype(complex)
+            shifted[:, k] += 1e-30j
+            _, p, b = field(shifted, tau)
+            db[:, :, k] = b.imag / 1e-30
+            gp[:, k] = p.imag / 1e-30
+        curl = np.column_stack(
+            (db[:, 2, 1] - db[:, 1, 2], db[:, 0, 2] - db[:, 2, 0], db[:, 1, 0] - db[:, 0, 1])
+        )
+        np.testing.assert_allclose(np.trace(db, axis1=1, axis2=2), 0, atol=2e-12)
+        np.testing.assert_allclose(np.cross(curl, magnetic), gp, rtol=0, atol=2e-12)
+        assert np.max(surface_distance(points, np.ones(len(points)), tau)) < 1e-11
 
 
 def measure(tau, resolution, work):
