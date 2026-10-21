@@ -182,7 +182,9 @@ ELSEIF (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
     SET(GVEC_ADD_COMPILE_FLAGS_MACHINE "-xHost" CACHE STRING "additional machine dependent compile flags")
   ENDIF()
 
-  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -r8 -i4 -traceback -warn all -shared-intel -DINTEL")
+  # gfortran allocates large automatic arrays on the heap; ifx/ifort use the stack and overflow
+  # it (SIGSEGV in evalforce, mhd3d_evalfunc.F90) on w7x-sized cases, also in OpenMP threads.
+  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -r8 -i4 -traceback -warn all -shared-intel -DINTEL -heap-arrays")
   SET(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE} -qopt-report=5 -diag-disable=10397 -no-prec-div")
   SET(CMAKE_Fortran_FLAGS_PROFILE "${CMAKE_Fortran_FLAGS_PROFILE} -pg -O3 -qopt-report0 -qopt-report-phase=vec -no-prec-div")
   SET(CMAKE_Fortran_FLAGS_DEBUG   "${CMAKE_Fortran_FLAGS_DEBUG} -O0 -fpe0 -traceback -check noarg_temp_created,noformat,nooutput_conversion,pointer -init=snan -init=arrays")
