@@ -210,15 +210,16 @@ def test_eval_rho2_profile_iota_vs_phi_and_chi(teststate, c_poly):
     np.testing.assert_allclose(eval_dchids / eval_dphids, ref_poly_vals, atol=tol)
 
 
-# NOTE: the get_iota_fobj method is not actually used and has issues with ifx in DEBUG mode
-# def test_get_iota_fobj(teststate_min):
-#     iota_fobj = teststate_min._get_iota_fobj()
-#     # f90wrap apparently doesn't know which implementation the returned object is
-#     assert isinstance(iota_fobj, gvec.lib.c_rProfile)
-#     r = 0.1
-#     v1 = iota_fobj.eval_at_rho(r)
-#     v2 = teststate_min.evaluate_profile("iota", rho=r)
-#     np.testing.assert_allclose(v1, v2, atol=1e-12)
+def test_get_iota_fobj(teststate_min):
+    iota_fobj = teststate_min._get_iota_fobj()
+    # f90wrap exposes the abstract base, retaining the Fortran dynamic type.
+    assert isinstance(iota_fobj, gvec.lib.c_rProfile)
+    np.testing.assert_allclose(iota_fobj.coefs, teststate_min.parameters["iota"]["coefs"])
+    for r in [0.0, 0.1, 0.5, 1.0]:
+        for deriv in range(5):
+            v1 = iota_fobj.eval_at_rho(r, deriv=deriv)
+            v2 = teststate_min.evaluate_profile("iota", rho=r, deriv=deriv)
+            np.testing.assert_allclose(v1, v2, atol=1e-12)
 
 
 def test_get_iota(teststate_min):
