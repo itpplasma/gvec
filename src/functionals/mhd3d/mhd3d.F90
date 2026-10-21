@@ -875,6 +875,9 @@ SUBROUTINE InitAverageAxis()
         x2int=x2int+(X2_b_IP(i_m-1,i_n)+X2_b_IP(i_m,i_n))*dl
       END DO
       ! c_x= 1/(6A) sum_i (x_i-1+x_i)*(x_i-1*y_i - x_i*y_i-1), A=1/2 sum_i  (x_i-1*y_i - x_i*y_i-1)
+      IF(lint.EQ.0.0_wp) CALL abort(__STAMP__, &
+        "init_average_axis: boundary has zero signed area in a poloidal plane; check X1_b and X2_b coefficients!", &
+        IntInfo=i_n, TypeInfo="InitializationError")
       X1_b_IP(:,i_n) = x1int/(3.0_wp*lint) + average_axis_move(1)
       X2_b_IP(:,i_n) = x2int/(3.0_wp*lint) + average_axis_move(2)
     END DO
