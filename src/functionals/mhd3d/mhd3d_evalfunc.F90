@@ -1764,8 +1764,8 @@ SUBROUTINE FinalizeMHD3D_EvalFunc()
 ! LOCAL VARIABLES
   INTEGER :: iMode
 !===================================================================================================================================
-  CALL trial_X1_base%free()
-  CALL trial_X2_base%free()
+  IF(ALLOCATED(trial_X1_base)) CALL trial_X1_base%free()
+  IF(ALLOCATED(trial_X2_base)) CALL trial_X2_base%free()
   SDEALLOCATE(trial_X1_base)
   SDEALLOCATE(trial_X2_base)
   SDEALLOCATE(trial_hmap_auxvar)
