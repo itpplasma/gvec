@@ -8,6 +8,11 @@ on:
     branches:
       - develop
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
   workflow_dispatch:
   merge_group:
 
