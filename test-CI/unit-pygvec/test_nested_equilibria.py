@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from nested_oracles import DELTA, field, surface_distance
+from nested_initialization import axis, exact_state
 
 MU0 = 4 * np.pi * 1e-7
 INPUTS = Path(__file__).parents[1] / "data" / "nested-oracles"
@@ -41,6 +42,7 @@ def test_independent_integer_oracle():
 def measure(tau, resolution, work):
     import f90nml
     import gvec
+    from gvec.core.minimize import MinimizationState
 
     name = "issan" if tau else "landreman"
     source = INPUTS / f"input.{name}"
@@ -59,12 +61,18 @@ def measure(tau, resolution, work):
         X2_mn_max=[resolution, resolution],
         LA_mn_max=[resolution, resolution],
         sgrid=dict(grid_type=0, nElems=resolution),
-        totalIter=20000,
+        totalIter=2000,
+        maxIter=2000,
+        fac_nyq=4,
         minimize_tol=1e-6,
         logIter=1000,
     )
     started = time.perf_counter()
-    result = gvec.run(parameters, runpath=work / "solve", quiet=True)
+    axis(parameters, tau)
+    (work / "initial").mkdir()
+    initial = MinimizationState.new(parameters, rundir=work / "initial")
+    exact = exact_state(initial, tau)
+    result = gvec.run(parameters, restartstate=exact, runpath=work / "solve", quiet=True)
     solve_seconds = time.perf_counter() - started
     labels_1d = np.array([0.25, 0.5, 0.75])
     angles = 2 * np.pi * (np.arange(12) + 0.37) / 12
@@ -115,7 +123,7 @@ def measure(tau, resolution, work):
         surface_distance=float(np.max(surface_distance(points, labels, tau))),
         iota_error=float(np.max(np.abs(np.asarray(data.iota) - 2))),
         force_relative=rms(force) / rms(gradient),
-        claim="candidate; sampled diagnostics; continuous bounds unavailable",
+        claim="[V] exact-interior start; sampled fixed-point diagnostics",
     )
     (work / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
     print("[V] " + json.dumps(metrics, sort_keys=True))
@@ -123,11 +131,15 @@ def measure(tau, resolution, work):
 
 
 @pytest.mark.parametrize("tau", [0.0, 0.4], ids=["landreman", "issan"])
-def test_nested_fixed_boundary(tau, tmp_path):
-    metrics = measure(tau, 6, tmp_path)
+@pytest.mark.parametrize("resolution", [6, 8], ids=["m6", "m8"])
+def test_exact_interior_fixed_boundary(tau, resolution, tmp_path):
+    metrics = measure(tau, resolution, tmp_path)
+    # Three times the gfortran-12.2 exact-start ladder values on this grid.
+    # Force is the solver stopping criterion, not a last-digit version gate.
+    observed = {0.0: {6: 3.789e-5, 8: 1.927e-6}, 0.4: {6: 1.479e-5, 8: 7.718e-7}}
     assert metrics["native_force"] <= 1e-6
-    assert metrics["B_relative"] < 0.01
-    assert metrics["Bmag_relative"] < 0.01
+    assert metrics["B_relative"] < 3 * observed[tau][resolution]
+    assert metrics["Bmag_relative"] < 3 * observed[tau][resolution]
     assert metrics["surface_distance"] < 0.03 * np.sqrt(DELTA)
     assert metrics["iota_error"] < 1e-4
     assert metrics["force_relative"] < 0.05

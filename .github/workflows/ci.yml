@@ -91,6 +91,9 @@ jobs:
     env:
       # job-wide like upstream's exported variable: test_build_type compares it with the built library
       SKBUILD_CMAKE_BUILD_TYPE: ${{ matrix.build_type }}
+      # Small exact-interior regression solves run faster without thread overhead.
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v4.2.2
         with:

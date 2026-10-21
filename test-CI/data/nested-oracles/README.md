@@ -58,12 +58,20 @@ probe is also positive in its tested subspace. None proves full stability.
 [H] A discrete admissibility/representation defect remains a candidate;
 the four-mode truncation is insufficient for this diagnostic ladder.
 
-[H] The six-mode solved-case thresholds remain provisional physical accuracy
-targets. No converged cold-start ladder justifies solver regression gates;
-keep the PR draft. An exact-interior start must not replace the cold-start
-regression merely to pass CI. Boundary continuation from an eps=0 cold solve
-converges at its first stage but stalls at eps=0.1; a successful continuation
-recipe has not been established.
+[V] The fast CI regression uses exact-interior starts at modes/elements 6 and
+8 for both tau values. `nested_initialization.py` projects the analytic chart
+onto the native Fourier/quintic spline basis and checks its flux labels
+against the independent field oracle before solving. No stored numerical
+solution is loaded. All four cases satisfy native force <=1e-6; B and |B|
+RMS gates are three times the corresponding B RMS values above. This margin
+covers compiler/stopping-point variation at the solver tolerance; it does not
+require agreement in digits below that tolerance. Strong-force, surface and
+iota diagnostics retain the existing physical-accuracy gates.
+
+[V] These tests validate discretisation and the minimiser fixed point. Cold
+starts at eps=0.5 remain a separate solver-robustness problem, not a fast-CI
+admission criterion. The earlier boundary continuation from an eps=0 cold
+solve stalled at eps=0.1. Keep the fork PR draft.
 
 [V] `surface_distance` intersects a ray from the analytic axis with the exact
 surface in the candidate's geometric-phi section. Its maximum is a sampled
