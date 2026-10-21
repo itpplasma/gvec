@@ -252,6 +252,42 @@ def test_free_boundary_descent_does_not_stop_before_full_window(tmp_path):
     assert np.isfinite(ds.free_boundary_target.values).sum() == 6
 
 
+@pytest.mark.parametrize("scale", [1.0, 1e-4])
+def test_free_boundary_ftol_uses_log_target_slope(tmp_path, monkeypatch, scale):
+    """A known exponential target stops at the full window, independent of target scale."""
+    pytest.importorskip("fbtools")
+    from gvec.core.minimize import MinimizationState
+    from gvec.core.run.free_boundary import MOVING_AVERAGE_WINDOW
+
+    evaluate = MinimizationState._free_boundary_target
+    samples = 0
+
+    def exponential_target(self, B_ext_2):
+        nonlocal samples
+        _, balance, boundary, average = evaluate(self, B_ext_2)
+        target = np.asarray(scale * np.exp(-0.01 * samples))
+        samples += 1
+        return target, balance, boundary, average
+
+    monkeypatch.setattr(MinimizationState, "_free_boundary_target", exponential_target)
+    p = _params()
+    p["totalIter"] = 20000
+    p["minimize_tol"] = 1e-5
+    p["free_boundary"] = dict(
+        updates=MOVING_AVERAGE_WINDOW + 3,
+        tolerance=1e-12,
+        dt=1e-3,
+        force_ratio_limit=0.0,
+        gtol=0.0,
+        xtol=0.0,
+        ftol=0.02,
+    )
+    run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    ds = run.diagnostics_stage[list(run.diagnostics_stage.children)[-1]].to_dataset()
+    assert np.isfinite(ds.free_boundary_target.values).sum() == MOVING_AVERAGE_WINDOW + 1
+    assert ds.fdelta.dropna("updates").values[-1] == pytest.approx(0.01)
+
+
 def test_normal_displacement_basis_3d(tmp_path):
     """A helical boundary retains all representable normal traces with the right nfp."""
     from gvec.core.minimize import MinimizationState

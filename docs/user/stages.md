@@ -353,3 +353,9 @@ Full example: [`parameter.yaml`](<path:../../python/examples/current_profile/adv
 
 :::
 ::::
+
+For free-boundary descent, `free_boundary.ftol` (default `1e-5`) bounds the
+absolute slope of a linear fit to the natural logarithm of the normalized
+free-boundary target over the latest 20 updates (21 target samples). This
+criterion is independent of the target scale. Both `ftol` and `xtol` are
+checked only once that full window is available; each stage starts fresh.
