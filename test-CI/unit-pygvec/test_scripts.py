@@ -94,6 +94,18 @@ def test_run():
     assert isinstance(run, gvec.FixedBoundaryRun)
 
 
+def test_run_iteration_limit():
+    """A full run that stops at its iteration limit returns normally with a warning (#94)."""
+    parameters = gvec.util.read_parameters("parameter.ini")
+    parameters["maxIter"] = 2
+    # set up logging first: its logging.captureWarnings() would hide the warning from pytest.warns
+    gvec.util.logging_setup()
+    with pytest.warns(UserWarning, match="GVEC run: Maximum number of iterations"):
+        run = gvec.run(parameters)
+    assert not run.success
+    assert run.message.startswith("Maximum number of iterations")
+
+
 def test_run_recover_from_error():
     """Test if GVEC exits cleanly after an error and can run again."""
     parameters = gvec.util.read_parameters("parameter.ini")

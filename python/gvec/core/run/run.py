@@ -52,6 +52,7 @@ def run(
     -------
     gvec.Run
         Run-object containing history and current state of the GVEC run.
+        `success` and `message` tell whether the tolerances were reached.
     """
 
     # logger setup
