@@ -93,6 +93,12 @@ that netCDF-Fortran installation, or use `-DLINK_GVEC_TO_NETCDF=Off` for builds
 without VMEC input/output.
 Flang builds use `-fopenmp` directly; if the OpenMP runtime provides no `omp_lib`
 module (conda-forge), CMake compiles the minimal `src/compat/omp_lib_shim.F90`.
+Flang keeps large automatic arrays on the stack: run GVEC with `ulimit -s unlimited` and
+`OMP_STACKSIZE=1G`, otherwise cases of W7-X size end with a segmentation fault.
+For all compilers, pyGVEC measures pointer handles with the selected GVEC compiler
+and uses `python/f90wrap_gvec.py` to apply that size to the generated Fortran wrappers
+and Python array accessors. The build runs the measurement executable on the build
+host; cross-compilation to a target that cannot run there is not supported.
 
 Further, the user can also create own presets by creating his own preset file `CMakeUserPresets.json` in the GVEC directory. Be careful to only add new entries with new names, as they must be different from those in `CMakePresets.json`. For example compiling on a mac in debug mode:
 ```json
