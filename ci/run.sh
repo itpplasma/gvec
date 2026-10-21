@@ -35,8 +35,12 @@ export GITHUB_ENV=$root/github-env GITHUB_PATH=$root/github-path GITHUB_OUTPUT=$
 export SCI_CPUS=${SCI_CPUS:-8}
 export CMAKE_BUILD_PARALLEL_LEVEL=$SCI_CPUS CTEST_PARALLEL_LEVEL=$SCI_CPUS
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+# Registered pytest tiers share their case output directories, as upstream CI.
+export CTEST_PARALLEL_LEVEL=1
 export RUNNER_TEMP=$root/tmp
 mkdir -p "$RUNNER_TEMP" ci-out
+# Compiler probes and isolated Python builds must execute outside noexec /tmp.
+export TMPDIR=$RUNNER_TEMP
 { hostname; /usr/bin/gfortran --version | head -1; git rev-parse HEAD; } | tee ci-out/toolchain.txt
 load_job_environment() {
     while IFS='=' read -r key value; do
