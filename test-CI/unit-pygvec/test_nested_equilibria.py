@@ -113,7 +113,7 @@ if __name__ == "__main__":
     import sys
 
     out = Path(sys.argv[1]).resolve()
-    for resolution in (4, 6, 8):
+    for resolution in (6, 8, 10):
         for tau in (0.0, 0.4):
             work = out / f"m{resolution}-tau{tau}"
             work.mkdir(parents=True)
