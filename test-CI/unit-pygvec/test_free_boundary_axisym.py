@@ -116,6 +116,39 @@ def test_free_boundary_run_axisymmetric(tmp_path):
     assert np.isfinite(run.state.evaluate("X1", rho=1.0, theta=0.0, zeta=0.0).X1.values).all()
 
 
+@pytest.mark.parametrize("criterion", ["ftol", "xtol"])
+def test_free_boundary_stop_above_interior_tolerance(tmp_path, criterion, caplog):
+    """A boundary stopping criterion is not an interior iteration-limit exit."""
+    pytest.importorskip("fbtools")
+    from gvec.core.run.free_boundary import MOVING_AVERAGE_WINDOW
+
+    p = _params()
+    p.update(totalIter=10000, maxIter=2, minimize_tol=1e-30)
+    p["free_boundary"] = dict(
+        updates=MOVING_AVERAGE_WINDOW + 3,
+        tolerance=0.0,
+        ftol=-1.0,
+        xtol=-1.0,
+        gtol=0.0,
+        force_ratio_limit=0.0,
+        ramp_force_tol=False,
+        dt=1e-3,
+    )
+    p["free_boundary"][criterion] = 1e10  # stop at the first full window
+    gvec.util.logging_setup()
+    with caplog.at_level("INFO", logger="gvec.run.free_boundary"):
+        with pytest.warns(UserWarning, match="GVEC run:") as recorded:
+            run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+
+    assert f"Reached {criterion}!" in caplog.text
+    assert run.max_force > p["minimize_tol"]
+    assert not run.success
+    assert run.GVEC_iter_used < p["totalIter"]
+    assert criterion in run.message
+    assert "iterations" not in run.message.lower()
+    assert str(recorded[-1].message) == f"GVEC run: {run.message}"
+
+
 def test_free_boundary_resolution_proposal_after_newton_stalls_at_update_0(tmp_path):
     """Newton that makes no step leaves only update 0 in the diagnostics; the resolution proposal at the end of
     the stage must use that column, not the (still NaN) last one."""
@@ -478,6 +511,7 @@ def test_newton_already_converged_restart(monkeypatch):
     assert run.gnorm == 0.0
     assert run.newton_history == []
     assert run.newton_jacobian is None
+    assert "newton_gtol" in run._stop_reason
 
 
 def test_newton_oversized_soft_step_keeps_stiff_progress(monkeypatch):
@@ -537,6 +571,8 @@ def test_newton_small_step_does_not_stop_above_gtol(monkeypatch):
     )  # stops on the step size, far from the reference
     assert np.linalg.norm(fixed.state.y - y_ref) < 1e-8
     assert fixed.gnorm < 1e-7
+    assert "newton_xtol" in legacy._stop_reason
+    assert "newton_gtol" in fixed._stop_reason
 
 
 def test_newton_respects_totaliter_budget(monkeypatch):
@@ -552,6 +588,7 @@ def test_newton_respects_totaliter_budget(monkeypatch):
             monkeypatch, y_start, y_ref, stiffness, 0.0, maxIter=10, totaliter=budget
         )
         assert run.state.iterations <= budget
+        assert "totalIter" in run._stop_reason
         # the boundary is left at the last accepted state, not in a half-finished trial
         np.testing.assert_array_equal(run.state.y, run.state._saved)
     # Base solve (10), two residual evaluations (20), then the remaining budget (5).

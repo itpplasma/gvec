@@ -293,6 +293,7 @@ class FreeBoundaryRun(AbstractRun):
         # start with a fixed boundary equilibrium
         # the norms of the previous stage must not feed this stage's moving averages and stop criteria
         self._reset_convergence_statistics()
+        self._stop_reason = "Maximum number of free-boundary updates reached."
 
         # how many free boundary updates,
         # NOTE: required parameter
@@ -471,6 +472,7 @@ class FreeBoundaryRun(AbstractRun):
                     )
                     # abort if budget is used up
                     if self.iters_used >= self.totaliter:
+                        self._stop_reason = "Maximum number of iterations reached (totalIter)."
                         logger.warning(
                             "Maximum number of iterations reached! aborting free-boundary iterations."
                         )
@@ -507,20 +509,25 @@ class FreeBoundaryRun(AbstractRun):
                     force_ratio_limit_reached = self._resolved_force_ratio <= force_ratio_limit
 
                     if fb_target_reached:
+                        self._stop_reason = "Free-boundary target tolerance reached."
                         logger.info(
                             "Reached free boundary target tolerance! Terminating free boundary updates."
                         )
                         break
                     elif ftol_reached:
+                        self._stop_reason = "Free-boundary ftol reached."
                         logger.info("Reached ftol! Terminating free boundary updates.")
                         break
                     elif xtol_reached:
+                        self._stop_reason = "Free-boundary xtol reached."
                         logger.info("Reached xtol! Terminating free boundary updates.")
                         break
                     elif gtol_reached:
+                        self._stop_reason = "Free-boundary gtol reached."
                         logger.info("Reached gtol! Terminating free boundary updates.")
                         break
                     elif force_ratio_limit_reached:
+                        self._stop_reason = "Free-boundary force_ratio_limit reached."
                         logger.info(
                             "Force ratio below specified limit! Terminating free boundary updates."
                         )
@@ -653,6 +660,7 @@ class FreeBoundaryRun(AbstractRun):
                     )
 
             except KeyboardInterrupt:
+                self._stop_reason = "Free-boundary run interrupted by keyboard interrupt."
                 logger.warning("Aborting free-boundary due to keyboard interrupt!")
             if (
                 self._resolved_force_ratio < force_ratio_limit
@@ -849,6 +857,7 @@ class FreeBoundaryRun(AbstractRun):
         rebuild_ratio = fbp.get("newton_rebuild_ratio", 0.5)
 
         self.newton_history = []
+        self._stop_reason = "Maximum number of free-boundary updates reached."
 
         def iterations_left():
             """maxIter for the next interior solve, None if the totaliter budget is used up."""
@@ -861,6 +870,7 @@ class FreeBoundaryRun(AbstractRun):
         self.state.reset_descent()
         maxIter_base = iterations_left()
         if maxIter_base is None:
+            self._stop_reason = "Maximum number of iterations reached (totalIter)."
             logger.warning(
                 "Maximum number of iterations reached! aborting Newton free-boundary iterations."
             )
@@ -889,6 +899,7 @@ class FreeBoundaryRun(AbstractRun):
             self.iters_used = self.state.get_iterations()
             self.newton_jacobian = None
             self._update_diagnostics(*fields, 0, 0.0)
+            self._stop_reason = "Newton free-boundary newton_gtol reached."
             logger.info("Newton free boundary: |g| below newton_gtol.")
             return 0
         # optional start Jacobian (a newton_jacobian_*.npz of a run with the same resolution,
@@ -971,6 +982,7 @@ class FreeBoundaryRun(AbstractRun):
                 f"============= Newton free-boundary update {fb_update} / {fb_updates} ============="
             )
             if iterations_left() is None:
+                self._stop_reason = "Maximum number of iterations reached (totalIter)."
                 logger.warning(
                     "Maximum number of iterations reached! aborting Newton free-boundary iterations."
                 )
@@ -1053,16 +1065,25 @@ class FreeBoundaryRun(AbstractRun):
             if not accepted:
                 self.state._restore_dofs()
                 if exhausted:
+                    self._stop_reason = "Maximum number of iterations reached (totalIter)."
                     logger.warning(
                         "Maximum number of iterations reached! aborting Newton free-boundary iterations."
                     )
                 elif np.max(np.abs(dy) * ynorm) >= noise_step:
+                    self._stop_reason = "Newton free-boundary step did not decrease |g|."
                     logger.warning(
                         "Newton free boundary: no decrease of |g| along the step; stopping."
                     )
                 elif gtol > 0.0 and np.linalg.norm(g) > gtol:
+                    self._stop_reason = (
+                        "Newton free-boundary iteration stalled above newton_gtol."
+                    )
                     logger.warning(
                         f"Newton free boundary: stalled above newton_gtol, |g| {np.linalg.norm(g):.3e} > {gtol:.3e}."
+                    )
+                else:
+                    self._stop_reason = (
+                        "Newton free-boundary step reached the newton_noise_step noise floor."
                     )
                 fb_update -= 1
                 break
@@ -1100,16 +1121,22 @@ class FreeBoundaryRun(AbstractRun):
                 f"alpha {alpha:.3f}, target {self.free_boundary_target:.3e}, FD Jacobians {n_jac}"
             )
             if self.gnorm < rtol * g_init:
+                self._stop_reason = "Newton free-boundary newton_rtol reached."
                 logger.info("Newton free boundary: |g| below newton_rtol.")
                 break
             if gtol > 0.0 and self.gnorm < gtol:
+                self._stop_reason = "Newton free-boundary newton_gtol reached."
                 logger.info("Newton free boundary: |g| below newton_gtol.")
                 break
             if self.xnorm < xtol:
                 if gtol <= 0.0 or self.gnorm < gtol:
+                    self._stop_reason = "Newton free-boundary newton_xtol reached."
                     logger.info("Newton free boundary: boundary step below newton_xtol.")
                     break
                 if step_fresh and slow:
+                    self._stop_reason = (
+                        "Newton free-boundary step below newton_xtol stalled above newton_gtol."
+                    )
                     logger.warning(
                         f"Newton free boundary: step below newton_xtol from a fresh FD Jacobian without a decrease "
                         f"of |g| ({self.gnorm:.3e} > newton_gtol {gtol:.3e}): stalled; stopping."
@@ -1121,6 +1148,7 @@ class FreeBoundaryRun(AbstractRun):
                     )
                     J = None
             if self.free_boundary_target <= free_boundary_tolerance:
+                self._stop_reason = "Newton free-boundary target tolerance reached."
                 logger.info("Newton free boundary: free-boundary target below tolerance.")
                 break
         # final (Broyden-updated) Jacobian, e.g. to be saved with np.savez(path, J=...) and passed as

@@ -282,8 +282,10 @@ class AbstractRun(ABC):
             self.save_intermediate = False
 
         start_time = time.time()
+        self._stop_reason = None
         for s, stage in enumerate(self.stages):
             if self.GVEC_iter_used >= self.totaliter:
+                self._stop_reason = "Maximum number of iterations reached (totalIter)."
                 self.logger.warning("Maximum number of GVEC iterations reached!")
                 break
             self.logger.debug(f"Entering stage {s}.")
@@ -300,6 +302,8 @@ class AbstractRun(ABC):
             )
             self._print_progress()
 
+            # Only the last stage determines the full run's stopping reason.
+            self._stop_reason = None
             self._run_stage()
             if self.state.I_tor:
                 self._state_parameters["iota"] = self.state.parameters["iota"]
@@ -323,7 +327,12 @@ class AbstractRun(ABC):
         if self.success:
             self.message = "Tolerance reached."
         else:
-            self.message = "Maximum number of iterations or restarts reached."
+            self.message = self._stop_reason or (
+                "Maximum number of iterations reached (totalIter)."
+                if self.GVEC_iter_used >= self.totaliter
+                else "Maximum number of iterations or restarts reached."
+            )
+            self.message += " Run tolerances were not reached."
             warnings.warn(f"GVEC run: {self.message}")
 
         final_iota_str = ""
