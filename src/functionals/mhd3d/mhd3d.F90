@@ -857,7 +857,7 @@ SUBROUTINE InitAverageAxis()
   REAL(wp) :: X2_b_IP(X2_base%f%mn_nyq(1),X2_base%f%mn_nyq(2))
 
   INTEGER  :: i_m,i_n
-  REAL(wp) :: dl,lint,x1int,x2int
+  REAL(wp) :: dl,lint,x1int,x2int,area_scale
 !-----------------------------------------------------------------------------------------------------------------------------------
   ASSOCIATE(m_nyq=>X1_base%f%mn_nyq(1),n_nyq=>X1_base%f%mn_nyq(2))
     X1_b_IP(:,:) = RESHAPE(X1_base%f%evalDOF_IP(0,X1_b),(/m_nyq,n_nyq/))
@@ -865,16 +865,26 @@ SUBROUTINE InitAverageAxis()
     DO i_n=1,n_nyq
       dl=X1_b_IP(m_nyq,i_n)*X2_b_IP(1,i_n)-X1_b_IP(1,i_n)*X2_b_IP(m_nyq,i_n)
       lint=dl
+      area_scale=ABS(X1_b_IP(m_nyq,i_n)*X2_b_IP(1,i_n))+ABS(X1_b_IP(1,i_n)*X2_b_IP(m_nyq,i_n))
       x1int=(X1_b_IP(m_nyq,i_n)+X1_b_IP(1,i_n))*dl
       x2int=(X2_b_IP(m_nyq,i_n)+X2_b_IP(1,i_n))*dl
       DO i_m=2,m_nyq
         dl=SQRT((X1_b_IP(i_m,i_n)-X1_b_IP(i_m-1,i_n))**2+(X2_b_IP(i_m,i_n)-X2_b_IP(i_m-1,i_n))**2)
         dl=X1_b_IP(i_m-1,i_n)*X2_b_IP(i_m,i_n)-X1_b_IP(i_m,i_n)*X2_b_IP(i_m-1,i_n)
         lint=lint+dl
+        area_scale=area_scale+ABS(X1_b_IP(i_m-1,i_n)*X2_b_IP(i_m,i_n)) &
+                             +ABS(X1_b_IP(i_m,i_n)*X2_b_IP(i_m-1,i_n))
         x1int=x1int+(X1_b_IP(i_m-1,i_n)+X1_b_IP(i_m,i_n))*dl
         x2int=x2int+(X2_b_IP(i_m-1,i_n)+X2_b_IP(i_m,i_n))*dl
       END DO
       ! c_x= 1/(6A) sum_i (x_i-1+x_i)*(x_i-1*y_i - x_i*y_i-1), A=1/2 sum_i  (x_i-1*y_i - x_i*y_i-1)
+      ! Bound roundoff in both products, their subtraction and the m_nyq-term sum.
+      ! Use pre-subtraction magnitudes to include cancellation within each dl;
+      ! 4*m_nyq*epsilon conservatively bounds gamma_(m_nyq+1), including scale summation.
+      IF(ABS(lint).LE.4.0_wp*REAL(m_nyq,wp)*EPSILON(1.0_wp)*area_scale) CALL abort(__STAMP__, &
+        "init_average_axis: boundary area is zero or not resolvable in poloidal plane i_n (IntInfo); "// &
+        "check X1_b and X2_b coefficients!", &
+        IntInfo=i_n, TypeInfo="InitializationError")
       X1_b_IP(:,i_n) = x1int/(3.0_wp*lint) + average_axis_move(1)
       X2_b_IP(:,i_n) = x2int/(3.0_wp*lint) + average_axis_move(2)
     END DO
