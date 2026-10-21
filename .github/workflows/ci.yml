@@ -39,7 +39,7 @@ jobs:
 
   fortran:
     name: fortran (${{ matrix.preset }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","itp-build"]') }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -50,39 +50,57 @@ jobs:
           - gvec_config_no-omp_release
     steps:
       - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run native checks in the build container
+        if: ${{ !github.event.pull_request.head.repo.fork }}
+        env:
+          SCI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SCI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SCI_MATRIX_PRESET: ${{ matrix.preset }}
+        run: |-
+          ci/run.sh ci-fortran
       - name: Install system packages
         run: |
           sudo apt-get update
           # packages from CI_images/ubuntu-24 (gcc/gfortran 13) plus ninja/ccache
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build ccache pkg-config gfortran g++ git liblapack-dev libblas-dev zlib1g-dev libnetcdf-dev libnetcdff-dev
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: pyproject.toml
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - name: Python test dependencies (used by the registered ctest tests)
         run: |
           python -m pip install pytest numpy pyyaml f90nml netcdf4 xarray scipy \
             matplotlib tabulate tomlkit tqdm pyevtk requests f90wrap
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - uses: hendrikmuhs/ccache-action@v1.2.18
         with:
           key: fortran-${{ matrix.preset }}
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - name: Configure
         run: >-
           cmake --preset ${{ matrix.preset }} -B build -G Ninja
           -DPython_EXECUTABLE="$(which python)"
           -DCMAKE_Fortran_COMPILER_LAUNCHER=ccache
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - name: Build
         run: cmake --build build --parallel
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - name: Test (registered ctest tests)
         # the tests share ctest_run/ctest_post directories, so run them serially
         run: ctest --test-dir build --output-on-failure --no-tests=error
 
+        if: ${{ github.event.pull_request.head.repo.fork }}
   python:
     name: python (${{ matrix.build_type }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","itp-build"]') }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -95,20 +113,32 @@ jobs:
       - uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0 # setuptools_scm needs tags
+          persist-credentials: false
+      - name: Run native checks in the build container
+        if: ${{ !github.event.pull_request.head.repo.fork }}
+        env:
+          SCI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SCI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SCI_MATRIX_BUILD_TYPE: ${{ matrix.build_type }}
+        run: |-
+          ci/run.sh ci-python
       - name: Install system packages
         run: |
           sudo apt-get update
           # packages from CI_images/ubuntu-24 (gcc/gfortran 13) plus ninja/ccache
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build ccache pkg-config gfortran g++ git liblapack-dev libblas-dev zlib1g-dev libnetcdf-dev libnetcdff-dev
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: pyproject.toml
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - uses: hendrikmuhs/ccache-action@v1.2.18
         with:
           key: python-${{ matrix.build_type }}
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - name: Build wheel (scikit-build-core, as upstream .script_build_py)
         env:
           SKBUILD_CMAKE_DEFINE: USE_OPENMP=On;USE_MPI=Off
@@ -118,13 +148,16 @@ jobs:
           python -m pip install build
           python -m build --wheel
           ls dist/
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - name: Install wheel
         run: |
           python -m pip install dist/*.whl pytest
           pygvec --version
+        if: ${{ github.event.pull_request.head.repo.fork }}
       - name: Unit tests (upstream .script_unit)
         run: python -m pytest -m unit -v -rA --require-pygvec --junitxml=pytest.xml
 
+        if: ${{ github.event.pull_request.head.repo.fork }}
   free-boundary:
     name: ${{ github.event_name == 'workflow_dispatch' && format('free-boundary ({0})', matrix.repetition) || 'free-boundary' }}
     runs-on: ubuntu-24.04
