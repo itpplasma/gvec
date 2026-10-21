@@ -83,6 +83,15 @@ With Cmake version > 3.22, the CMakePresets feature can be used to configure and
     cmake --build build -j
     ```
 
+The `gvec_config_nvhpc_release` and `gvec_config_flang_release` presets select
+`nvfortran` and LLVM `flang`, respectively. Use a separate build directory for
+each compiler. If LLVM installs the executable as `flang-new`, override it with
+`-DCMAKE_Fortran_COMPILER=flang-new`. Both presets enable OpenMP and netCDF;
+install the matching OpenMP runtime and compile netCDF-Fortran with the selected
+Fortran compiler (module files are compiler specific). Set `PKG_CONFIG_PATH` to
+that netCDF-Fortran installation, or use `-DLINK_GVEC_TO_NETCDF=Off` for builds
+without VMEC input/output.
+
 Further, the user can also create own presets by creating his own preset file `CMakeUserPresets.json` in the GVEC directory. Be careful to only add new entries with new names, as they must be different from those in `CMakePresets.json`. For example compiling on a mac in debug mode:
 ```json
 {
