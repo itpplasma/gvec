@@ -400,6 +400,12 @@ ENDIF()
 include(CTest)
 #ENABLE_TESTING()
 
+IF(BUILD_TESTING AND NOT SKBUILD AND GVEC_FIX_HMAP STREQUAL "off")
+  ADD_EXECUTABLE(test_hmap_factory test-CI/fortran/test_hmap_factory.F90)
+  TARGET_LINK_LIBRARIES(test_hmap_factory PRIVATE gveclib ${linkedlibs})
+  ADD_TEST(NAME hmap_factory COMMAND test_hmap_factory)
+ENDIF()
+
 # =========================================================================
 # Python bindings (pygvec), using f90wrap and f2py
 # =========================================================================
