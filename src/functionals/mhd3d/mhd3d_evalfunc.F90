@@ -14,13 +14,16 @@
 MODULE MODgvec_MHD3D_evalFunc
   ! MODULES
   USE MODgvec_Globals,            ONLY : wp,abort,UNIT_stdOut,fmt_sep,MPIRoot,enter_subregion,exit_subregion
+  USE MODgvec_base,               ONLY : t_base,base_new
+  USE MODgvec_hmap,               ONLY : PP_T_HMAP_AUXVAR,hmap_new_auxvar
+  USE MODgvec_fBase,              ONLY : sin_cos_map
   USE sll_m_spline_matrix,        ONLY : sll_c_spline_matrix !for precond
   USE sll_m_spline_matrix_banded, ONLY : sll_t_spline_matrix_banded
   IMPLICIT NONE
 
   PRIVATE
   PUBLIC::InitializeMHD3D_EvalFunc, InitProfilesGP, &
-          EvalEnergy, EvalForce, EvalAux, EvalTotals, FinalizeMHD3D_EvalFunc, chiPrime_GP
+          EvalEnergy, EvalForce, EvalAux, EvalTrialJacobian, EvalTotals, FinalizeMHD3D_EvalFunc, chiPrime_GP
 
   !evaluations at radial gauss points, size(base%s%nGP_str:base%s%nGP_end)
   REAL(wp),ALLOCATABLE :: pres_GP(:)      !! mass profile
@@ -68,6 +71,17 @@ MODULE MODgvec_MHD3D_evalFunc
   REAL(wp),ALLOCATABLE :: Gh11(:,:)     !! hmap  G_{11}
   REAL(wp),ALLOCATABLE :: Gh22(:,:)     !! hmap  G_{22}
 
+  ! Trial-only denser grid; all work storage is allocated during initialization.
+  CLASS(t_base),ALLOCATABLE,PRIVATE :: trial_X1_base,trial_X2_base
+#ifdef PP_WHICH_HMAP
+  TYPE(PP_T_HMAP_AUXVAR),ALLOCATABLE,PRIVATE :: trial_hmap_auxvar(:)
+#else
+  CLASS(PP_T_HMAP_AUXVAR),ALLOCATABLE,PRIVATE :: trial_hmap_auxvar(:)
+#endif
+  REAL(wp),ALLOCATABLE,PRIVATE :: trial_X1(:,:),trial_X2(:,:)
+  REAL(wp),ALLOCATABLE,PRIVATE :: trial_X1_s(:,:),trial_X2_s(:,:)
+  REAL(wp),ALLOCATABLE,PRIVATE :: trial_X1_t(:,:),trial_X2_t(:,:)
+
   ! Free boundary  vars
   REAL(wp), ALLOCATABLE :: X1_boundary(:)
   REAL(wp), ALLOCATABLE :: X2_boundary(:)
@@ -108,7 +122,7 @@ CONTAINS
 !===================================================================================================================================
 SUBROUTINE InitializeMHD3D_evalFunc()
 ! MODULES
-  USE MODgvec_MHD3D_Vars,ONLY:X1_base,X2_base,LA_base,PrecondType, FreeBoundary
+  USE MODgvec_MHD3D_Vars,ONLY:X1_base,X2_base,LA_base,PrecondType, FreeBoundary,hmap
   IMPLICIT NONE
 !-----------------------------------------------------------------------------------------------------------------------------------
 ! INPUT VARIABLES
@@ -148,6 +162,16 @@ SUBROUTINE InitializeMHD3D_evalFunc()
            g_tt,g_tz,g_zz,g_t1,g_t2,g_z1,g_z2, &
            Jh_dq1,Jh_dq2,gtt_dq1,gtt_dq2,gtz_dq1,gtz_dq2,gzz_dq1,gzz_dq2, &
            Gh11,Gh22, mold=J_h)
+
+  CALL base_new(trial_X1_base,X1_base%s%deg,X1_base%s%continuity,X1_base%s%grid, &
+                2*degGP+1,X1_base%f%mn_max,2*X1_base%f%mn_nyq,X1_base%f%nfp, &
+                sin_cos_map(X1_base%f%sin_cos),X1_base%f%exclude_mn_zero)
+  CALL base_new(trial_X2_base,X2_base%s%deg,X2_base%s%continuity,X2_base%s%grid, &
+                2*degGP+1,X2_base%f%mn_max,2*X2_base%f%mn_nyq,X2_base%f%nfp, &
+                sin_cos_map(X2_base%f%sin_cos),X2_base%f%exclude_mn_zero)
+  CALL hmap_new_auxvar(hmap,trial_X1_base%f%zeta_IP,trial_hmap_auxvar,.FALSE.)
+  ALLOCATE(trial_X1(trial_X1_base%f%mn_IP,trial_X1_base%s%nGP_str:trial_X1_base%s%nGP_end))
+  ALLOCATE(trial_X2,trial_X1_s,trial_X2_s,trial_X1_t,trial_X2_t,mold=trial_X1)
 
   IF(FreeBoundary)THEN
     ALLOCATE(X1_boundary(1:mn_IP))
@@ -236,6 +260,51 @@ CALL par_Bcast(PhiPrime2_GP,0)
 
 END SUBROUTINE InitProfilesGP
 
+
+!===================================================================================================================================
+!> Reject trial maps that fold between the integration points.
+!! This is a denser sampling safeguard, not a continuous positivity certificate.
+SUBROUTINE EvalTrialJacobian(dofs_in,JacCheck)
+  USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
+  USE MODgvec_MPI, ONLY: par_AllReduce
+  USE MODgvec_MHD3D_vars, ONLY: hmap
+  USE MODgvec_sol_var_MHD3D, ONLY: t_sol_var_MHD3D
+  IMPLICIT NONE
+  CLASS(t_sol_var_MHD3D),INTENT(IN) :: dofs_in
+  INTEGER,INTENT(INOUT) :: JacCheck
+  INTEGER :: iGP,i_mn,i_zeta
+  REAL(wp) :: jac,min_jac,max_jac
+
+  CALL trial_X1_base%evalDOF_all(dofs_in%X1,y_IP_GP=trial_X1,dy_dthet_IP_GP=trial_X1_t)
+  CALL trial_X2_base%evalDOF_all(dofs_in%X2,y_IP_GP=trial_X2,dy_dthet_IP_GP=trial_X2_t)
+  CALL trial_X1_base%evalDOF((/DERIV_S,0/),dofs_in%X1,trial_X1_s)
+  CALL trial_X2_base%evalDOF((/DERIV_S,0/),dofs_in%X2,trial_X2_s)
+  min_jac=HUGE(1.0_wp)
+  max_jac=-HUGE(1.0_wp)
+!$OMP PARALLEL DO SCHEDULE(STATIC) DEFAULT(NONE) &
+!$OMP PRIVATE(iGP,i_mn,i_zeta,jac) REDUCTION(min:min_jac) REDUCTION(max:max_jac) &
+!$OMP SHARED(trial_X1_base,trial_X1,trial_X2,trial_X1_s,trial_X2_s,trial_X1_t,trial_X2_t,hmap,trial_hmap_auxvar)
+  DO iGP=trial_X1_base%s%nGP_str,trial_X1_base%s%nGP_end
+    DO i_mn=1,trial_X1_base%f%mn_IP
+      i_zeta=1+(i_mn-1)/trial_X1_base%f%mn_nyq(1)
+      jac=TrialJacobian(trial_X1_s(i_mn,iGP),trial_X2_t(i_mn,iGP), &
+                        trial_X2_s(i_mn,iGP),trial_X1_t(i_mn,iGP), &
+                        hmap%eval_Jh_aux(trial_X1(i_mn,iGP),trial_X2(i_mn,iGP),trial_hmap_auxvar(i_zeta)))
+      IF(.NOT.ieee_is_finite(jac)) jac=-HUGE(1.0_wp)
+      min_jac=MIN(min_jac,jac)
+      max_jac=MAX(max_jac,jac)
+    END DO
+  END DO
+!$OMP END PARALLEL DO
+  CALL par_AllReduce(min_jac,'MIN')
+  CALL par_AllReduce(max_jac,'MAX')
+  IF(min_jac.LE.1.0e-12_wp*MAX(ABS(min_jac),ABS(max_jac))) THEN
+    JacCheck=-1
+    SWRITE(UNIT_stdOut,'(A,2E13.5)') ' off-grid trial Jacobian min/max: ',min_jac,max_jac
+  END IF
+END SUBROUTINE EvalTrialJacobian
+
+#include "trial_jacobian.inc"
 
 !===================================================================================================================================
 !> Evaluate auxiliary variables at input state, writes onto module variables!!!
@@ -1695,6 +1764,17 @@ SUBROUTINE FinalizeMHD3D_EvalFunc()
 ! LOCAL VARIABLES
   INTEGER :: iMode
 !===================================================================================================================================
+  CALL trial_X1_base%free()
+  CALL trial_X2_base%free()
+  SDEALLOCATE(trial_X1_base)
+  SDEALLOCATE(trial_X2_base)
+  SDEALLOCATE(trial_hmap_auxvar)
+  SDEALLOCATE(trial_X1)
+  SDEALLOCATE(trial_X2)
+  SDEALLOCATE(trial_X1_s)
+  SDEALLOCATE(trial_X2_s)
+  SDEALLOCATE(trial_X1_t)
+  SDEALLOCATE(trial_X2_t)
   nElems=-1
   degGP =-1
   nGP   =-1

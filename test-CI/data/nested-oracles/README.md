@@ -40,6 +40,17 @@ not establish cold-start convergence. The default initializer is in
 `mhd3d_evalfunc.F90:338` samples the integration grid. An independent finer
 grid detects negative Jacobians near rho=0.925 in accepted stalled states.
 
+[V] Trial acceptance now also evaluates a separate grid with twice as many
+Gauss points per radial element and twice as many points in each angle. It
+uses the existing basis and mapping evaluators, preallocated work arrays,
+and an OpenMP reduction. A FortSym-generated `wp` determinant leaf includes
+JVP/VJP forms; its affine-map identity is checked symbolically by the generator.
+The original integration-grid check remains in place. Neither sampling grid
+certifies continuous positivity, and the singular axis is not sampled.
+`test_offgrid_jacobian.py` constructs an analytic quintic map with positive
+Jacobians at every original integration point but a negative off-grid well;
+no trial of this map is accepted even at an effectively zero step.
+
 [V] Initializing the whole interior from the analytic chart gives the
 following sampled field errors after satisfying the native 1e-6 criterion
 with gfortran 12.2. These are initialization/representation checks, not

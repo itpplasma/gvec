@@ -434,7 +434,7 @@ MODULE MODgvec_MHD3D_minimize
     !! Also writes output files after set number of iterations
     !===================================================================================================================================
     SUBROUTINE MinimizeMHD3D_descent(sf, abstol, maxIter_in, logfinaliter_in)
-        USE MODgvec_MHD3D_EvalFunc, ONLY: EvalAux, EvalForce, EvalEnergy
+        USE MODgvec_MHD3D_EvalFunc, ONLY: EvalAux, EvalForce, EvalEnergy, EvalTrialJacobian
         USE MODgvec_Analyze, ONLY:analyze
         USE MODgvec_Restart, ONLY:WriteState
         USE MODgvec_MHD3D_visu, ONLY:WriteSFLoutfile
@@ -489,6 +489,7 @@ MODULE MODgvec_MHD3D_minimize
                 vars%JacCheck=2 !no abort,if detJ<0, JacCheck<=-1
 
                 vars%temp_dofs(1)%W_MHD3D=EvalEnergy(vars%temp_dofs(1),.TRUE.,vars%JacCheck)
+                IF(vars%JacCheck.GT.0) CALL EvalTrialJacobian(vars%temp_dofs(1),vars%JacCheck)
                 IF(vars%JacCheck.LE.-1)THEN
                     vars%nstepDecreased=vars%nStepDecreased+1
                     IF(vars%nStepDecreased.GT.130) THEN
