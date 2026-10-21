@@ -142,7 +142,11 @@ def test_exact_interior_fixed_boundary(tau, resolution, tmp_path):
     assert metrics["Bmag_relative"] < 3 * observed[tau][resolution]
     assert metrics["surface_distance"] < 0.03 * np.sqrt(DELTA)
     assert metrics["iota_error"] < 1e-4
-    assert metrics["force_relative"] < 0.05
+    observed_force = {
+        0.0: {6: 1.2994e-3, 8: 1.3218e-4},
+        0.4: {6: 4.5840e-4, 8: 1.4798e-4},
+    }
+    assert metrics["force_relative"] < 3 * observed_force[tau][resolution]
 
 
 if __name__ == "__main__":

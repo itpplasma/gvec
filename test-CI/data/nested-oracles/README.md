@@ -76,8 +76,9 @@ against the independent field oracle before solving. No stored numerical
 solution is loaded. All four cases satisfy native force <=1e-6; B and |B|
 RMS gates are three times the corresponding B RMS values above. This margin
 covers compiler/stopping-point variation at the solver tolerance; it does not
-require agreement in digits below that tolerance. Strong-force, surface and
-iota diagnostics retain the existing physical-accuracy gates.
+require agreement in digits below that tolerance. Strong-force RMS gates also use three times the ladder values: 1.2994e-3
+and 1.3218e-4 (Landreman, 6/8), 4.5840e-4 and 1.4798e-4 (Issan, 6/8).
+Surface and iota diagnostics retain the existing physical-accuracy gates.
 
 [V] These tests validate discretisation and the minimiser fixed point. Cold
 starts at eps=0.5 remain a separate solver-robustness problem, not a fast-CI
