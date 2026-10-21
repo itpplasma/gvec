@@ -3,6 +3,7 @@
 import logging
 import shutil
 import time
+import warnings
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -312,6 +313,18 @@ class AbstractRun(ABC):
 
         self.logger.info("Done.")
         end_time = time.time()
+
+        # reason for the return of the full run (single minimizations are limited by maxIter by design)
+        self.success = self.max_force <= self._state_parameters["minimize_tol"]
+        if self.state.I_tor:
+            self.success = (
+                self.success and self.state.rms_iota <= self.state.picard_current.iota_tol
+            )
+        if self.success:
+            self.message = "Tolerance reached."
+        else:
+            self.message = "Maximum number of iterations or restarts reached."
+            warnings.warn(f"GVEC run: {self.message}")
 
         final_iota_str = ""
         if self.state.I_tor:
