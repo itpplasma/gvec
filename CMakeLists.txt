@@ -240,9 +240,24 @@ MESSAGE(STATUS "CMAKE_Fortran_FLAGS_DEBUG is ${CMAKE_Fortran_FLAGS_DEBUG}")
 # OpenMP
 # =========================================================================
 
+SET(GVEC_OMP_LIB_SHIM OFF)
 IF(USE_OPENMP)
-  FIND_PACKAGE(OpenMP REQUIRED COMPONENTS Fortran)
-  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+  IF(CMAKE_Fortran_COMPILER_ID STREQUAL "LLVMFlang")
+    # FindOpenMP requires an omp_lib module, which e.g. conda-forge's LLVM OpenMP does not
+    # provide for Flang. Use -fopenmp directly and compile a minimal omp_lib if needed.
+    INCLUDE(CheckFortranSourceCompiles)
+    SET(CMAKE_REQUIRED_FLAGS "-fopenmp")
+    CHECK_FORTRAN_SOURCE_COMPILES("program t\nuse omp_lib\nprint *, omp_get_max_threads()\nend program" GVEC_HAVE_OMP_LIB)
+    UNSET(CMAKE_REQUIRED_FLAGS)
+    IF(NOT GVEC_HAVE_OMP_LIB)
+      SET(GVEC_OMP_LIB_SHIM ON)
+      MESSAGE(STATUS "Flang finds no omp_lib module: compiling src/compat/omp_lib_shim.F90")
+    ENDIF()
+    SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fopenmp")
+  ELSE()
+    FIND_PACKAGE(OpenMP REQUIRED COMPONENTS Fortran)
+    SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+  ENDIF()
 ENDIF()
 
 # =========================================================================
@@ -369,6 +384,10 @@ ENDIF()
 IF(COMPILE_SRC_PYGVEC)
   FILE(GLOB pygvecF90 ./src/pygvec/*.F90 )
   LIST(APPEND mainF90 ${pygvecF90})
+ENDIF()
+
+IF(GVEC_OMP_LIB_SHIM)
+  LIST(APPEND mainF90 ./src/compat/omp_lib_shim.F90)
 ENDIF()
 
 # append relative filename-macro for __FILENAME__ in stamp of abort function (see defines.FPP)
