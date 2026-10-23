@@ -284,7 +284,9 @@ END SUBROUTINE Abort
 !==================================================================================================================================
 FUNCTION GetTime() RESULT(t)
   ! MODULES
-!$ USE omp_lib
+#ifdef _OPENMP
+  USE omp_lib
+#endif
   IMPLICIT NONE
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
   REAL(wp) :: t   !< output time
@@ -307,7 +309,9 @@ END FUNCTION GetTime
 !==================================================================================================================================
 FUNCTION GetTimeSerial() RESULT(t)
   ! MODULES
-!$ USE omp_lib
+#ifdef _OPENMP
+  USE omp_lib
+#endif
   IMPLICIT NONE
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
   REAL(wp) :: t   !< output time
@@ -323,7 +327,9 @@ END FUNCTION GetTimeSerial
 !==================================================================================================================================
 SUBROUTINE ProgressBar(iter,n_iter)
   ! MODULES
-!$ USE omp_lib
+#ifdef _OPENMP
+  USE omp_lib
+#endif
   IMPLICIT NONE
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
   INTEGER,INTENT(IN) :: iter,n_iter  !! iter ranges from 1...n_iter

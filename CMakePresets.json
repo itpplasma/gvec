@@ -7,6 +7,22 @@
     },
     "configurePresets": [
         {
+            "name": "gvec_config_nvhpc_release",
+            "displayName": "GVEC configure: NVHPC release build",
+            "inherits": "gvec_config_release",
+            "cacheVariables": {
+                "CMAKE_Fortran_COMPILER": "nvfortran"
+            }
+        },
+        {
+            "name": "gvec_config_flang_release",
+            "displayName": "GVEC configure: LLVM Flang release build",
+            "inherits": "gvec_config_release",
+            "cacheVariables": {
+                "CMAKE_Fortran_COMPILER": "flang"
+            }
+        },
+        {
             "name": "gvec_config_release",
             "displayName": "GVEC configure: default release build",
             "hidden": false,
