@@ -182,7 +182,9 @@ ELSEIF (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
     SET(GVEC_ADD_COMPILE_FLAGS_MACHINE "-xHost" CACHE STRING "additional machine dependent compile flags")
   ENDIF()
 
-  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -r8 -i4 -traceback -warn all -shared-intel -DINTEL")
+  # gfortran allocates large automatic arrays on the heap; ifx/ifort use the stack and overflow
+  # it (SIGSEGV in evalforce, mhd3d_evalfunc.F90) on w7x-sized cases, also in OpenMP threads.
+  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -r8 -i4 -traceback -warn all -shared-intel -DINTEL -heap-arrays")
   SET(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE} -qopt-report=5 -diag-disable=10397 -no-prec-div")
   SET(CMAKE_Fortran_FLAGS_PROFILE "${CMAKE_Fortran_FLAGS_PROFILE} -pg -O3 -qopt-report0 -qopt-report-phase=vec -no-prec-div")
   SET(CMAKE_Fortran_FLAGS_DEBUG   "${CMAKE_Fortran_FLAGS_DEBUG} -O0 -fpe0 -traceback -check noarg_temp_created,noformat,nooutput_conversion,pointer -init=snan -init=arrays")
@@ -203,6 +205,12 @@ ELSEIF(CMAKE_Fortran_COMPILER_ID MATCHES "PGI")
   SET(CMAKE_Fortran_FLAGS         "${CMAKE_Fortran_FLAGS} -r8 -fPIC")
   # SET(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE}")
   SET(CMAKE_Fortran_FLAGS_PROFILE "${CMAKE_Fortran_FLAGS_PROFILE} -O3")
+  SET(CMAKE_Fortran_FLAGS_DEBUG   "${CMAKE_Fortran_FLAGS_DEBUG} -O0")
+
+ELSEIF(CMAKE_Fortran_COMPILER_ID STREQUAL "LLVMFlang")
+  SET(GVEC_ADD_COMPILE_FLAGS_MACHINE "" CACHE STRING "additional machine dependent compile flags")
+  SET(CMAKE_Fortran_FLAGS         "${CMAKE_Fortran_FLAGS} -fdefault-real-8 -fdefault-double-8 -fbackslash -fPIC")
+  SET(CMAKE_Fortran_FLAGS_PROFILE "${CMAKE_Fortran_FLAGS_PROFILE} -pg -O3")
   SET(CMAKE_Fortran_FLAGS_DEBUG   "${CMAKE_Fortran_FLAGS_DEBUG} -O0")
 
 ELSEIF(CMAKE_Fortran_COMPILER_ID MATCHES "NVHPC")
@@ -234,9 +242,24 @@ MESSAGE(STATUS "CMAKE_Fortran_FLAGS_DEBUG is ${CMAKE_Fortran_FLAGS_DEBUG}")
 # OpenMP
 # =========================================================================
 
+SET(GVEC_OMP_LIB_SHIM OFF)
 IF(USE_OPENMP)
-  FIND_PACKAGE(OpenMP REQUIRED COMPONENTS Fortran)
-  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+  IF(CMAKE_Fortran_COMPILER_ID STREQUAL "LLVMFlang")
+    # FindOpenMP requires an omp_lib module, which e.g. conda-forge's LLVM OpenMP does not
+    # provide for Flang. Use -fopenmp directly and compile a minimal omp_lib if needed.
+    INCLUDE(CheckFortranSourceCompiles)
+    SET(CMAKE_REQUIRED_FLAGS "-fopenmp")
+    CHECK_FORTRAN_SOURCE_COMPILES("program t\nuse omp_lib\nprint *, omp_get_max_threads()\nend program" GVEC_HAVE_OMP_LIB)
+    UNSET(CMAKE_REQUIRED_FLAGS)
+    IF(NOT GVEC_HAVE_OMP_LIB)
+      SET(GVEC_OMP_LIB_SHIM ON)
+      MESSAGE(STATUS "Flang finds no omp_lib module: compiling src/compat/omp_lib_shim.F90")
+    ENDIF()
+    SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fopenmp")
+  ELSE()
+    FIND_PACKAGE(OpenMP REQUIRED COMPONENTS Fortran)
+    SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+  ENDIF()
 ENDIF()
 
 # =========================================================================
@@ -363,6 +386,10 @@ ENDIF()
 IF(COMPILE_SRC_PYGVEC)
   FILE(GLOB pygvecF90 ./src/pygvec/*.F90 )
   LIST(APPEND mainF90 ${pygvecF90})
+ENDIF()
+
+IF(GVEC_OMP_LIB_SHIM)
+  LIST(APPEND mainF90 ./src/compat/omp_lib_shim.F90)
 ENDIF()
 
 # append relative filename-macro for __FILENAME__ in stamp of abort function (see defines.FPP)
