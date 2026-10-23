@@ -219,3 +219,11 @@ Using the python interface, any statefile can be loaded and visualized using the
 For line plots, csv datafiles are generated.
 
 For 3D visualization data, it is possible to write `*visu*.vtu` files, that can be visualized in [paraview](https://www.paraview.org). There is an option to write visualization data in netcdf, `*visu*.nc`, which can be read for example in python.
+
+## Fork compiler CI
+
+On the ITP GitHub fork, `Additional Fortran compilers` runs LLVM flang at the merge
+decision and on direct default-branch pushes. Its manual dispatch can
+also enable NVHPC; that job is opt-in because the NVIDIA SDK container is large.
+Both jobs build compiler-specific netCDF-Fortran modules, run the registered
+CTest suite, and install and test the Python bindings with `--require-pygvec`.

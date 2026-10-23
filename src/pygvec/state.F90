@@ -122,7 +122,7 @@ SUBROUTINE minimize(dt_in, logfinaliter, maxIter_in, minimize_tol)
   ! CODE ------------------------------------------------------------------------------------------------------------------------!
   StartTime=GetTime()
   CALL functional%minimize(dt_in, logfinaliter, maxIter_in, minimize_tol)
-  CLOSE (functional%minimizer%vars%logUnit)
+  IF (functional%minimizer%vars%logUnit_open) CLOSE (functional%minimizer%vars%logUnit)
   functional%minimizer%vars%logUnit_open = .FALSE.
   EndTime=GetTime()
   SWRITE(Unit_stdOut,'(A,2(F8.2,A))') ' FUNCTIONAL MINIMISATION FINISHED! [',EndTime-StartTime,' sec ], corresponding to [', &
@@ -1404,12 +1404,12 @@ END SUBROUTINE evaluate_profile
 !> initialize a SFL-Boozer object for the Boozer or Hamada potential, with some parameters taken from the state (globals)
 !> Note: as of v0.2.16 (Thanks Christopher Albert) f90wrap supports ALLOCATABLEs in the return value
 !================================================================================================================================!
-FUNCTION init_sfl_potential(mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda, whichSFL) RESULT(sfl_boozer)
+SUBROUTINE init_sfl_potential_in_place(sfl_boozer, mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda, whichSFL)
   ! MODULES
-  USE MODgvec_SFL_Boozer,   ONLY: t_sfl_boozer
+  USE MODgvec_SFL_Boozer,   ONLY: t_sfl_boozer, sfl_boozer_init
   USE MODgvec_MHD3D_vars,     ONLY: hmap, iota_profile, Phi_profile
   ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
-  TYPE(t_sfl_boozer) :: sfl_boozer                 !! SFL-Boozer object
+  TYPE(t_sfl_boozer), INTENT(INOUT) :: sfl_boozer  !! SFL-Boozer object, initialized in place
   INTEGER, INTENT(IN) :: mn_max(2), mn_nyq(2), nrho             !! parameters for the Boozer object
   CHARACTER(LEN=8), INTENT(IN)   :: sin_cos      !! can be either only sine: " _sin_" only cosine: " _cos_" or full: "_sin_cos_"
   REAL, INTENT(IN), DIMENSION(nrho) :: rho_pos                  !! radial positions
@@ -1423,7 +1423,23 @@ FUNCTION init_sfl_potential(mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda, wh
     iota(i) = iota_profile%eval_at_rho(rho_pos(i))
     phiPrime(i) = Phi_profile%eval_at_rho(rho_pos(i),deriv=1)
   END DO
-  sfl_boozer = t_sfl_boozer(mn_max, mn_nyq, nfp, sin_cos, hmap, nrho, rho_pos, iota, phiPrime, relambda, whichSFL)
+  CALL sfl_boozer_init(sfl_boozer, mn_max, mn_nyq, nfp, sin_cos, hmap, nrho, rho_pos, iota, phiPrime, relambda, whichSFL)
+END SUBROUTINE init_sfl_potential_in_place
+
+!> Note: the f90wrap-generated wrapper assigns this result to an allocatable; python/f90wrap_gvec.py replaces that
+!> assignment by init_sfl_potential_in_place, as NVHPC zeroes polymorphic allocatable components in such assignments
+FUNCTION init_sfl_potential(mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda, whichSFL) RESULT(sfl_boozer)
+  ! MODULES
+  USE MODgvec_SFL_Boozer,   ONLY: t_sfl_boozer
+  ! INPUT/OUTPUT VARIABLES ------------------------------------------------------------------------------------------------------!
+  TYPE(t_sfl_boozer) :: sfl_boozer                 !! SFL-Boozer object
+  INTEGER, INTENT(IN) :: mn_max(2), mn_nyq(2), nrho             !! parameters for the Boozer object
+  CHARACTER(LEN=8), INTENT(IN)   :: sin_cos      !! can be either only sine: " _sin_" only cosine: " _cos_" or full: "_sin_cos_"
+  REAL, INTENT(IN), DIMENSION(nrho) :: rho_pos                  !! radial positions
+  LOGICAL, INTENT(IN) :: relambda                               !! recompute lambda flag
+  INTEGER, INTENT(IN) :: whichSFL                               !! =2: Boozer, =3: Hamada potential
+  ! CODE ------------------------------------------------------------------------------------------------------------------------!
+  CALL init_sfl_potential_in_place(sfl_boozer, mn_max, mn_nyq, sin_cos, nrho, rho_pos, relambda, whichSFL)
 END FUNCTION init_sfl_potential
 
 SUBROUTINE get_sfl_potential(sfl_boozer)
