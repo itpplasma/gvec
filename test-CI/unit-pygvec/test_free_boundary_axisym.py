@@ -879,3 +879,29 @@ def test_newton_parallel_fd_jacobian_matches_serial(tmp_path):
         h2[-1]["jacobians"] == 2
     )  # the second FD Jacobian reuses the worker pool from a new base state
     np.testing.assert_allclose(h2[-1]["residual"], h1[-1]["residual"], rtol=1e-3)
+
+
+def test_default_discretization_after_asymmetric_vmec(tmp_path):
+    from pathlib import Path
+
+    from gvec.core.minimize import MinimizationState
+    from gvec.core.run.free_boundary import _normal_displacement_basis
+    from gvec.scripts.convert_wout import convert_vmec_wout
+
+    source = Path(__file__).parents[1] / "data/wout_test-signgs-neg-asymT.nc"
+    # Reading profiles binds the asymmetric VMEC state without requesting output.
+    convert_vmec_wout(source)
+    parameters = _params()
+    parameters["FreeBoundary"] = True
+    for name in ("X1", "X2", "LA"):
+        del parameters[f"{name}_mn_max"]
+    state = MinimizationState.new(parameters, rundir=tmp_path)
+    try:
+        for name in ("X1", "X2", "LA"):
+            assert tuple(state.get_mn_max(name)) == (2, 0)
+        basis, _ = _normal_displacement_basis(state)
+        # The analytic circle has four independent normal traces, regardless
+        # of which equilibrium was read before this default configuration.
+        assert basis.shape[1] == 4
+    finally:
+        state.unbind()
