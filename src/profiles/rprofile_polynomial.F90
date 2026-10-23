@@ -40,6 +40,19 @@ MODULE MODgvec_rProfile_poly
     REAL,    INTENT(IN) :: coefs(:)  !! B-Spline coefficients
     ! OUTPUT VARIABLES -------------------------!
     TYPE(t_rProfile_poly) :: sf
+    ! CODE --------------------------------------------------------------------------------------------------------------------------!
+    CALL polyProfile_init(sf, coefs)
+  END FUNCTION polyProfile_new
+
+  !===================================================================================================================================
+  !> initialize the polynomial profile in place, see polyProfile_new
+  !!
+  !===================================================================================================================================
+  SUBROUTINE polyProfile_init(sf, coefs)
+    ! INPUT VARIABLES -------------------------!
+    REAL,    INTENT(IN) :: coefs(:)  !! polynomial coefficients
+    ! OUTPUT VARIABLES -------------------------!
+    TYPE(t_rProfile_poly), INTENT(INOUT) :: sf
     ! LOCAL VARIABLES -------------------------!
     INTEGER :: n_coefs
     ! CODE --------------------------------------------------------------------------------------------------------------------------!
@@ -48,7 +61,7 @@ MODULE MODgvec_rProfile_poly
     sf%n_coefs = n_coefs
     ALLOCATE(sf%coefs(1:n_coefs))
     sf%coefs = coefs
-  END FUNCTION polyProfile_new
+  END SUBROUTINE polyProfile_init
 
   !===================================================================================================================================
   !> evaluate the n-th derivative of a power polynomial
