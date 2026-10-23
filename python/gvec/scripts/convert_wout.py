@@ -15,6 +15,7 @@ import xarray as xr
 
 import gvec
 from gvec.util import CaseInsensitiveDict
+from gvec.lib import _state
 
 parser = argparse.ArgumentParser(
     prog="pygvec-convert-wout",
@@ -162,6 +163,9 @@ def convert_vmec_wout(
         )
 
         if rundir is not None:
+            # State initialization suppresses output; publish the converted state explicitly.
+            with gvec.util.chdir(tmpdir):
+                _state.save_statefile()
             shutil.copy(sorted(Path(tmpdir).glob("*State*.dat"))[-1], rundir)
             gvec.util.write_parameters(parameters, rundir / "parameter.ini")
             gvec.util.write_parameters(parameters, rundir / "parameter.toml")
