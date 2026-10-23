@@ -174,6 +174,7 @@ MODULE MODgvec_MHD3D_minimize
             vars%JacCheck = 1
 
 
+            vars%logUnit = -1
             vars%logUnit_open = .FALSE.
             vars%restart_iter = .TRUE.
             vars%logger_is_initialized = .FALSE.
@@ -609,7 +610,8 @@ MODULE MODgvec_MHD3D_minimize
         INTEGER :: i !! iteration variable
         !===============================================================================================================================
         ASSOCIATE(vars=>sf%vars)
-            CLOSE(vars%logUnit)
+            IF (vars%logUnit_open) CLOSE(vars%logUnit)
+            vars%logUnit_open = .FALSE.
             DO i=-1,1
                 IF(ALLOCATED(vars%dofs)) CALL vars%dofs(i)%free()
                 IF(ALLOCATED(vars%temp_dofs)) CALL vars%temp_dofs(i)%free()

@@ -192,8 +192,23 @@ FUNCTION newton_Root1D_wrap_Min1D_new(parent) RESULT(sf)
   ! OUTPUT VARIABLES ------------------------!
   TYPE(t_newton_Root1D_wrap_Min1D) :: sf
   ! CODE --------------------------------------------------------------------------------------------------------------------------!
-  sf%parent = parent
+  CALL newton_Root1D_wrap_Min1D_init(sf, parent)
 END FUNCTION
+
+!===================================================================================================================================
+!> initialize the wrapper in place, see newton_Root1D_wrap_Min1D_new
+!!
+!===================================================================================================================================
+SUBROUTINE newton_Root1D_wrap_Min1D_init(sf, parent)
+  ! MODULES
+  IMPLICIT NONE
+  ! INPUT VARIABLES -------------------------!
+  CLASS(c_newton_Min1D), INTENT(IN) :: parent
+  ! OUTPUT VARIABLES ------------------------!
+  TYPE(t_newton_Root1D_wrap_Min1D), INTENT(INOUT) :: sf
+  ! CODE --------------------------------------------------------------------------------------------------------------------------!
+  sf%parent = parent
+END SUBROUTINE newton_Root1D_wrap_Min1D_init
 
 
 !===================================================================================================================================

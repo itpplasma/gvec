@@ -52,6 +52,20 @@ MODULE MODgvec_rProfile_bspl
     REAL(wp),    INTENT(IN) :: coefs(:)  !! B-Spline coefficients
     ! OUTPUT VARIABLES -------------------------!
     TYPE(t_rProfile_bspl) :: sf !! self
+    ! CODE --------------------------------------------------------------------------------------------------------------------------!
+    CALL bsplProfile_init(sf, knots, coefs)
+  END FUNCTION bsplProfile_new
+
+  !===================================================================================================================================
+  !> initialize the rProfile of type bspline in place, see bsplProfile_new
+  !!
+  !===================================================================================================================================
+  SUBROUTINE bsplProfile_init(sf, knots, coefs)
+    ! INPUT VARIABLES -------------------------!
+    REAL(wp),    INTENT(IN) :: knots(:)  !! knots of the B-Spline with repeated start and end points
+    REAL(wp),    INTENT(IN) :: coefs(:)  !! B-Spline coefficients
+    ! OUTPUT VARIABLES -------------------------!
+    TYPE(t_rProfile_bspl), INTENT(INOUT) :: sf !! self
     ! LOCAL VARIABLES -------------------------!
     INTEGER :: n_knots, n_coefs
     ! CODE --------------------------------------------------------------------------------------------------------------------------!
@@ -77,7 +91,7 @@ MODULE MODgvec_rProfile_bspl
                               size(sf%knots(sf%deg+1:n_knots-sf%deg))-1 , & ! number of knots handed to the library
                               sf%knots(sf%deg+1:n_knots-sf%deg)) ! remove repeated edge knots
     END IF
-  END FUNCTION bsplProfile_new
+  END SUBROUTINE bsplProfile_init
 
   !===================================================================================================================================
   !> evaluate the n-th derivative of the bsplProfile at position s

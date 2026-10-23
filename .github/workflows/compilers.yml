@@ -1,0 +1,83 @@
+name: Additional Fortran compilers
+
+on:
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'src/**'
+      - 'python/**'
+      - 'test-CI/**'
+      - 'CI_setup/test_compiler.sh'
+      - '.github/workflows/compilers.yml'
+  push:
+    branches: [develop]
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      nvhpc:
+        description: 'Also run NVHPC (requires a large container download)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compilers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flang:
+    if: >-
+      github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.actor != 'github-merge-queue[bot]') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - name: LLVM Flang and system libraries
+        run: |
+          curl --fail --location --retry 3 https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo 'deb [signed-by=/usr/share/keyrings/llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            flang-23 libflang-23-dev libomp-23-dev liblapack-dev libnetcdf-dev \
+            cmake ninja-build pkg-config python3-dev python3-venv
+      - name: Native and Python tests
+        env:
+          FC: flang-23
+          OMP_STACKSIZE: 1G
+          CC: gcc
+          CXX: g++
+        run: |
+          ulimit -s unlimited
+          bash CI_setup/test_compiler.sh
+
+  nvhpc:
+    if: github.event_name == 'workflow_dispatch' && inputs.nvhpc
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    container: nvcr.io/nvidia/nvhpc:26.9-devel-cuda13.3-ubuntu24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Build and test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            gcc g++ curl cmake ninja-build pkg-config liblapack-dev libnetcdf-dev \
+            python3 python3-dev python3-venv
+      - name: Native and Python tests
+        env:
+          FC: nvfortran
+          CC: gcc
+          CXX: g++
+        run: bash CI_setup/test_compiler.sh
