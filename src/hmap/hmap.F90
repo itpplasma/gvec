@@ -66,26 +66,28 @@ IMPLICIT NONE
 !===================================================================================================================================
   CALL enter_subregion("hmap")
   IF(.NOT. PRESENT(hmap_in))THEN
+    ! Sourced allocation preserves the constructor result's dynamic type (NVHPC).
+    IF(ALLOCATED(sf)) DEALLOCATE(sf)
     SELECT CASE(which_hmap)
 #ifdef PP_WHICH_HMAP
     CASE(PP_WHICH_HMAP)
-      sf=PP_T_HMAP()
+      ALLOCATE(sf,source=PP_T_HMAP())
     CASE DEFAULT
       CALL abort(__STAMP__, &
            "FIXED HMAP TO PP_WHICH_HMAP AT COMPILE TIME,  hmap choice is therefore not compatible  !")
 #else
     CASE(1)
-      sf=t_hmap_RZ()
+      ALLOCATE(sf,source=t_hmap_RZ())
     !CASE(2)
     !  ALLOCATE(t_hmap_RphiZ :: sf)
     CASE(3)
-      sf=t_hmap_cyl()
+      ALLOCATE(sf,source=t_hmap_cyl())
     CASE(10)
-      sf=t_hmap_knot()
+      ALLOCATE(sf,source=t_hmap_knot())
     CASE(20)
-      sf=t_hmap_frenet()
+      ALLOCATE(sf,source=t_hmap_frenet())
     CASE(21)
-      sf=t_hmap_axisNB()
+      ALLOCATE(sf,source=t_hmap_axisNB())
     CASE DEFAULT
       CALL abort(__STAMP__, &
            "this hmap choice does not exist  !")
