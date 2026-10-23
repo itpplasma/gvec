@@ -390,9 +390,6 @@ ENDIF()
 
 IF(GVEC_OMP_LIB_SHIM)
   LIST(APPEND mainF90 ./src/compat/omp_lib_shim.F90)
-  # CMake does not discover the OpenMP-sentinel USE in globals.F90.
-  SET_PROPERTY(SOURCE ./src/globals/globals.F90 APPEND PROPERTY
-    OBJECT_DEPENDS "${CMAKE_Fortran_MODULE_DIRECTORY}/omp_lib.mod")
 ENDIF()
 
 # append relative filename-macro for __FILENAME__ in stamp of abort function (see defines.FPP)
