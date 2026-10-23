@@ -951,7 +951,7 @@ SUBROUTINE WriteSFLoutfile(dofs_in,fileID)
   USE MODgvec_MHD3D_vars,     ONLY: Phi_profile, iota_profile
   USE MODgvec_fBase,          ONLY: t_fbase,sin_cos_map
   USE MODgvec_Transform_SFL,  ONLY: find_pest_angles
-  USE MODgvec_SFL_Boozer,     ONLY: t_sfl_boozer
+  USE MODgvec_SFL_Boozer,     ONLY: t_sfl_boozer, sfl_boozer_init
   USE MODgvec_output_netcdf,  ONLY: WriteDataToNETCDF
   USE MODgvec_output_vtk,     ONLY: WriteDataToVTK
   USE MODgvec_Output_vars,    ONLY: ProjectName,outputLevel
@@ -1121,10 +1121,13 @@ SUBROUTINE WriteSFLoutfile(dofs_in,fileID)
     IF(SFLout_relambda .OR. (whichSFLout.EQ.2))THEN
       !for relambda=True, make use of the boozer transform computation
       SWRITE(UNIT_stdOut,'(A)')'recomputing lambda using boozer transform...'
-      sfl_booz = t_sfl_boozer(mn_max,4*mn_max+1,nfp, &  !recomputation of lambda with 4 times the number of modes
-                          sin_cos_map(LA_base%f%sin_cos),hmap, &
-                          SFLout_nrp,rho_pos,iota_prof,phiPrime_prof,&
-                          relambda_in=SFLout_relambda)
+      ! Initialise in place: NVHPC 26.9 loses the polymorphic hmap_xv(:) values on assignment to an allocatable.
+      IF(ALLOCATED(sfl_booz)) DEALLOCATE(sfl_booz)
+      ALLOCATE(sfl_booz)
+      CALL sfl_boozer_init(sfl_booz,mn_max,4*mn_max+1,nfp, &  !recomputation of lambda with 4 times the number of modes
+                           sin_cos_map(LA_base%f%sin_cos),hmap, &
+                           SFLout_nrp,rho_pos,iota_prof,phiPrime_prof,&
+                           relambda_in=SFLout_relambda)
       CALL sfl_booz%get_boozer(X1_base,X2_base,LA_base,dofs_in%X1,dofs_in%X2,dofs_in%LA)
     ELSE
       ALLOCATE(LA_s(LA_base%f%modes,SFLout_nrp))

@@ -431,6 +431,9 @@ IF(BUILD_TESTING AND NOT SKBUILD AND GVEC_FIX_HMAP STREQUAL "off")
   ADD_EXECUTABLE(test_hmap_factory test-CI/fortran/test_hmap_factory.F90)
   TARGET_LINK_LIBRARIES(test_hmap_factory PRIVATE gveclib ${linkedlibs})
   ADD_TEST(NAME hmap_factory COMMAND test_hmap_factory)
+  ADD_EXECUTABLE(test_sfl_boozer_init test-CI/fortran/test_sfl_boozer_init.F90)
+  TARGET_LINK_LIBRARIES(test_sfl_boozer_init PRIVATE gveclib ${linkedlibs})
+  ADD_TEST(NAME sfl_boozer_init_frenet COMMAND test_sfl_boozer_init)
 ENDIF()
 
 # =========================================================================

@@ -71,7 +71,7 @@ INTERFACE t_sfl_boozer
   MODULE PROCEDURE sfl_boozer_new
 END INTERFACE
 
-PUBLIC :: t_sfl_boozer, find_boozer_angles
+PUBLIC :: t_sfl_boozer, sfl_boozer_init, find_boozer_angles
 PUBLIC :: sfl_boozer_free  ! needed for f90wrap finalizer
 !===================================================================================================================================
 
@@ -82,7 +82,7 @@ CONTAINS
 !> initialize sfl boozer class
 !!
 !===================================================================================================================================
-FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiPrime,relambda_in,whichSFL_in) RESULT(sf)
+SUBROUTINE sfl_boozer_init(sf,mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiPrime,relambda_in,whichSFL_in)
   ! MODULES
   USE MODgvec_Globals, ONLY: UNIT_stdOut
   USE MODgvec_fbase, ONLY: t_fBase
@@ -105,7 +105,7 @@ FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiP
                                    !! FALSE: lambda from equilibrium solution is taken.
   INTEGER, INTENT(IN),OPTIONAL :: whichSFL_in  !! DEFAULT=2: Boozer coordinates, =3: Hamada coordinates
   ! OUTPUT VARIABLES -------------------------!
-  TYPE(t_sfl_boozer) :: sf !! self
+  TYPE(t_sfl_boozer),INTENT(INOUT) :: sf !! self, freshly allocated or default-initialized
   ! CODE --------------------------------------------------------------------------------------------------------------------------!
   SWRITE(UNIT_StdOut,'(A)') 'NEW sfl_boozer'
   sf%nrho = nrho
@@ -135,6 +135,29 @@ FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiP
   ALLOCATE(sf%lambda(sf%nu_fbase%modes,nrho),sf%nu(sf%nu_fbase%modes,nrho))
   sf%initialized=.TRUE.
   SWRITE(UNIT_StdOut,'(A)') '... DONE.'
+END SUBROUTINE sfl_boozer_init
+
+!===================================================================================================================================
+!> construct sfl boozer class, see sfl_boozer_init
+!!
+!===================================================================================================================================
+FUNCTION sfl_boozer_new(mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiPrime,relambda_in,whichSFL_in) RESULT(sf)
+  IMPLICIT NONE
+  ! INPUT VARIABLES -------------------------!
+  INTEGER,INTENT(IN) :: mn_max(2),mn_nyq(2),nfp,nrho
+  CHARACTER(LEN=8)   :: sin_cos
+#ifdef PP_WHICH_HMAP
+  TYPE(PP_T_HMAP),INTENT(IN),TARGET :: hmap_in
+#else
+  CLASS(c_hmap)  ,INTENT(IN),TARGET :: hmap_in
+#endif
+  REAL(wp),INTENT(IN) :: rho_pos(nrho),iota(nrho),phiPrime(nrho)
+  LOGICAL, INTENT(IN),OPTIONAL :: relambda_in
+  INTEGER, INTENT(IN),OPTIONAL :: whichSFL_in
+  ! OUTPUT VARIABLES -------------------------!
+  TYPE(t_sfl_boozer) :: sf !! self
+  ! CODE --------------------------------------------------------------------------------------------------------------------------!
+  CALL sfl_boozer_init(sf,mn_max,mn_nyq,nfp,sin_cos,hmap_in,nrho,rho_pos,iota,phiPrime,relambda_in,whichSFL_in)
 END FUNCTION sfl_boozer_new
 
 !===================================================================================================================================
