@@ -4,13 +4,13 @@ import netCDF4
 import numpy as np
 import pytest
 
-import gvec
-from gvec.scripts.convert_wout import convert_vmec_wout
-
 
 @pytest.mark.parametrize("signgs", ["neg", "pos"])
 @pytest.mark.parametrize("asymmetric", ["F", "T"])
 def test_converted_wout_state_can_be_reloaded(tmp_path, signgs, asymmetric):
+    import gvec
+    from gvec.scripts.convert_wout import convert_vmec_wout
+
     source = (
         Path(__file__).parents[1] / "data" / f"wout_test-signgs-{signgs}-asym{asymmetric}.nc"
     )
