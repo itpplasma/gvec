@@ -207,8 +207,10 @@ jobs:
         run: |
           python -m pip install scikit-build-core setuptools_scm numpy f90wrap \
             pytest cmake ninja pybind11
-          # pip fetches the BIEST/SCTL submodules of fbtools recursively
-          python -m pip install --no-build-isolation \
+          # fbtools defaults to -march=native; rebuild on the CPU that loads it.
+          # pip's persistent wheel tag does not distinguish hosted runner ISAs.
+          # pip fetches the BIEST/SCTL submodules of fbtools recursively.
+          python -m pip install --no-build-isolation --no-cache-dir \
             "fbtools @ git+https://gitlab.mpcdf.mpg.de/nmpp-mhd-group/fhindenlang/fbtools.git@${FBTOOLS_REV}"
           # use the free_boundary extra once the branch defines it
           if grep -q '^free_boundary *=' pyproject.toml; then spec='.[free_boundary]'; else spec='.'; fi
@@ -216,7 +218,9 @@ jobs:
       - name: Import check
         run: |
           lscpu
-          python -c "import fbtools, gvec, numpy; print('fbtools', fbtools.__file__); print('gvec', gvec.__version__); numpy.show_runtime()"
+          python -u -c "import numpy; print('numpy', numpy.__version__); numpy.show_runtime()"
+          python -u -c "import fbtools; print('fbtools', fbtools.__file__)"
+          python -u -c "import gvec; print('gvec', gvec.__version__)"
       - name: Free-boundary tests
         run: |
           set -euo pipefail
