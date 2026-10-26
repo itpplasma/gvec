@@ -219,6 +219,25 @@ def test_picard_auto():
     assert ev.iota_curr.max().data < 1e-6
 
 
+def test_picard_iota_and_force_initial_stage():
+    """Test if 'target="iota_and_force"' survives the initial stage without an iota fit.
+
+    Without explicit stages, pyGVEC prepends an initial stage with maxIter=0. For
+    'iota_and_force' the iota update is deferred until after the force minimization, so
+    'state.rms_iota' is still None when the stage diagnostics are written.
+    """
+    parameters = gvec.util.read_parameters("parameter.toml")
+    ProjectName = "Test_iota_and_force"
+    parameters["projectname"] = ProjectName
+    parameters["picard_current"] = dict(target="iota_and_force", iota_tol=1e-6)
+    parameters["maxIter"] = 20
+    parameters["totaliter"] = 50
+    run = gvec.run(parameters)
+
+    assert run.GVEC_iter_used > 0
+    assert Path(f"{ProjectName}_State_final.dat").exists()
+
+
 @pytest.mark.parametrize("ptype", ["interpolation", "polynomial", "bspline"])
 def test_I_tor_types(ptype):
     """Test if all types of I_tor profiles result in valid current optimization."""
