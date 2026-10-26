@@ -115,10 +115,16 @@ class FixedBoundaryRun(AbstractRun):
         if self.state.I_tor:
             quantities += ["iota", "I_tor"]
 
-            self.logger.info(
-                f"rms Δiota: {self.state.rms_iota:.2e}"
-                f", iota_tol: {self.state.picard_current.iota_tol:.2e}"
-            )
+            if self.state.rms_iota is None:
+                # `target="iota_and_force"` minimizes the forces before the first iota update,
+                # and the initial stage runs with maxIter=0: no iota fit has been performed yet,
+                # so there is no rms Δiota to report for this stage.
+                self.logger.debug("No iota update performed yet, rms Δiota is not defined.")
+            else:
+                self.logger.info(
+                    f"rms Δiota: {self.state.rms_iota:.2e}"
+                    f", iota_tol: {self.state.picard_current.iota_tol:.2e}"
+                )
         rho_eval = np.linspace(0, 1, DIAGNOSTICS_NPOINTS)
 
         ev = self.state.evaluate(*quantities, rho=rho_eval)
