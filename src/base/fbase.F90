@@ -1277,6 +1277,14 @@ SUBROUTINE fBase_evalDOF_IP_multi(sf,deriv,nG,DOFs,y_IP)
     CALL abort(__STAMP__,'fBase_evalDOF_IP_multi: wrong array sizes')
   IF(.NOT.ANY(deriv.EQ.(/0,DERIV_THET,DERIV_ZETA/))) CALL abort(__STAMP__, &
        "fBase_evalDOF_IP_multi: derivative must be 0,DERIV_THET,DERIV_ZETA!")
+  ! The blocked path only pays off without toroidal modes (measured: 1.6x faster axisymmetric tokamak, 1.1-1.5x slower W7-X),
+  ! so for n_max>0 fall back to the per-point transform.
+  IF(sf%mn_max(2).GT.0)THEN
+    DO g=1,nG
+      y_IP(:,g)=sf%evalDOF_IP(deriv,DOFs(g,:))
+    END DO !g
+    RETURN
+  END IF
   nmax  =sf%mn_max(2)
   mTotal=sf%mTotal1D
   nTotal=2*nmax+1
@@ -1349,6 +1357,14 @@ SUBROUTINE fBase_projectIPtoDOF_multi(sf,add,factor,deriv,nG,y_IP,DOFs)
      .OR. SIZE(factor).LT.nG) CALL abort(__STAMP__,'fBase_projectIPtoDOF_multi: wrong array sizes')
   IF(.NOT.ANY(deriv.EQ.(/0,DERIV_THET,DERIV_ZETA/))) CALL abort(__STAMP__, &
        "fBase_projectIPtoDOF_multi: derivative must be 0,DERIV_THET,DERIV_ZETA!")
+  ! The blocked path only pays off without toroidal modes (measured: 1.6x faster axisymmetric tokamak, 1.1-1.5x slower W7-X),
+  ! so for n_max>0 fall back to the per-point transform.
+  IF(sf%mn_max(2).GT.0)THEN
+    DO g=1,nG
+      CALL sf%projectIPtoDOF(add,factor(g),deriv,y_IP(:,g),DOFs(g,:))
+    END DO !g
+    RETURN
+  END IF
   nmax  =sf%mn_max(2)
   mTotal=sf%mTotal1D
   nTotal=2*nmax+1
