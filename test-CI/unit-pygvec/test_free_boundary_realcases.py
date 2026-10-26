@@ -362,6 +362,7 @@ def test_free_boundary_stellarator_resolution(tmp_path, record_property):
     _check_physics(run, log, coils, pressure_tolerances=(6e-4, 1.8e-3), grid=(96, 64))
 
 
+@pytest.mark.slow
 def test_free_boundary_gframe_nonzero_current(gframe, record_property):
     run, log, coils = gframe
     assert not run.state.clockwise_zeta
