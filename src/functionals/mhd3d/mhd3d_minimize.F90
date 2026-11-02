@@ -612,8 +612,10 @@ MODULE MODgvec_MHD3D_minimize
         ASSOCIATE(vars=>sf%vars)
             IF (vars%logUnit_open) CLOSE(vars%logUnit)
             vars%logUnit_open = .FALSE.
-            DO i=-1,1
+            DO i=-3,1
                 IF(ALLOCATED(vars%dofs)) CALL vars%dofs(i)%free()
+            END DO
+            DO i=-1,1
                 IF(ALLOCATED(vars%temp_dofs)) CALL vars%temp_dofs(i)%free()
             END DO
             DO i=-1,0
