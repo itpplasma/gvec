@@ -140,10 +140,12 @@ def compute_boundary_perturbation(
             # set boundary modes to values from restart
             for (m, n), v in base_parameters.get(f"X{i}_b_{sincos}", {}).items():
                 base[m, n] = v
-            # set boundary perturbation to difference between current and restart; a mode missing on either side is 0
-            new = perturbed_parameters.get(f"X{i}_b_{sincos}", {})
-            for m, n in list(new) + [mn for mn in base if mn not in new]:
-                v = new.get((m, n), 0) - base.get((m, n), 0)
+            # set boundary perturbation to difference between current and restart,
+            # a mode missing on one side is zero there (ordered: current modes first, then restart-only modes)
+            restart = base_parameters.get(f"X{i}_b_{sincos}", {})
+            current = perturbed_parameters.get(f"X{i}_b_{sincos}", {})
+            for m, n in list(current) + [mn for mn in restart if mn not in current]:
+                v = current.get((m, n), 0) - restart.get((m, n), 0)
                 if v != 0.0:
                     perturbed[m, n] = v
             if base or perturbed:

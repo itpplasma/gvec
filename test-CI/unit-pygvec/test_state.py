@@ -48,6 +48,31 @@ def test_new(testfiles, tmp_path, util):
         assert (tmp_path / "parameter.ini").exists()
 
 
+def test_new_default_sin_cos_after_asymmetric_vmec(tmp_path):
+    """The default `_cos_`/`_sin_` bases must not be inherited from a previous asymmetric VMEC initialization."""
+    gvec.scripts.convert_wout.convert_vmec_wout(
+        Path(__file__).parent / "../data/wout_test-signgs-neg-asymT.nc"
+    )
+    parameters = {
+        "nfp": 1,
+        "PhiEdge": -1.0,
+        "iota": {"type": "polynomial", "coefs": [0.5]},
+        "pres": {"type": "polynomial", "coefs": [0.0]},
+        "X1_b_cos": {(0, 0): 3.0, (1, 0): 0.5},
+        "X2_b_sin": {(1, 0): 0.5},
+        "X1_a_cos": {(0, 0): 3.0},
+        "sgrid_nElems": 2,
+        "X1X2_deg": 3,
+        "LA_deg": 3,
+        "X1_mn_max": [2, 0],
+        "X2_mn_max": [2, 0],
+        "LA_mn_max": [2, 0],
+    }
+    state = State.new(parameters, tmp_path)
+    assert state._get_X1_n_modes() == 3  # cos: m=0,1,2 (sincos would give 5)
+    assert state._get_X2_n_modes() == 2  # sin: m=1,2
+
+
 def test_load_state(testfiles):
     state = load_state(*testfiles)
     assert isinstance(state, State)
@@ -380,6 +405,52 @@ def test_get_boozer(teststate, reLA):
     assert booz.nrho == 3
 
 
+def test_get_boozer_sincos(tmp_path):
+    """Boozer transform with sincos="sincos" on a non-symmetric boundary.
+
+    Circular torus with the poloidal origin rotated by delta and iota=0: the field is purely
+    toroidal, so |B| R is constant on each flux surface in any angles.
+    """
+    R0, a, delta = 3.0, 0.6, 0.7
+    params = dict(
+        nfp=1,
+        iota_type="polynomial",
+        iota_coefs=[0.0],
+        pres_type="polynomial",
+        pres_coefs=[0.0],
+        sgrid_nElems=2,
+        X1X2_deg=3,
+        LA_deg=3,
+        init_LA=False,
+        X1_mn_max=[12, 0],
+        X2_mn_max=[12, 0],
+        LA_mn_max=[12, 0],
+        X1_sin_cos="_sincos_",
+        X2_sin_cos="_sincos_",
+        LA_sin_cos="_sincos_",
+        X1_a_cos={(0, 0): R0},
+        X1_b_cos={(0, 0): R0, (1, 0): a * np.cos(delta)},
+        X1_b_sin={(1, 0): a * np.sin(delta)},
+        X2_b_cos={(1, 0): -a * np.sin(delta)},
+        X2_b_sin={(1, 0): a * np.cos(delta)},
+    )
+    state = State.new(params, rundir=tmp_path)
+    ev = gvec.evaluate_sfl(
+        state,
+        "mod_B",
+        "X1",
+        rho=[0.4, 0.8],
+        theta=32,
+        zeta=2,
+        sfl="boozer",
+        MNfactor=1,
+        sincos="sincos",
+        radial_derivative=False,
+    )
+    BR = ev.mod_B * ev.X1
+    np.testing.assert_allclose(BR / BR.isel(pol=0, tor=0), 1.0, rtol=1e-9)
+
+
 def test_get_boozer_angles(teststate):
     booz = teststate.get_boozer([0.1, 0.4, 0.6, 0.9], 1)
     tz = teststate.get_boozer_angles(booz, [[0.1, 0.5, 0.9], [0.1, 0.5, 0.9]])
@@ -432,3 +503,13 @@ def test_get_pest_angles_2D_rt(teststate):
     np.testing.assert_allclose(
         theta + LA, np.tile(theta_P.reshape(-1, 1), (1, rho.size)), atol=1e-12
     )
+
+
+def test_info(teststate):
+    from gvec.scripts.info import info
+
+    output = info(teststate)
+    assert isinstance(output, list)
+    assert len(output) > 0
+    assert all(isinstance(row, list) and len(row) == 3 for row in output)
+    assert any("frame_linking_number" in row for row in output)
