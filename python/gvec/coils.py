@@ -366,6 +366,74 @@ class Coil:
         return ax
 
 
+class MgridField:
+    """External magnetic field tabulated in a MAKEGRID ``mgrid`` file.
+
+    The field is ``sum_i extcur[i] * B_i`` over the coil groups, as in VMEC:
+    a scaled (``S``) table holds the field per ampere and a raw (``R``) table
+    already includes the coil currents, so ``extcur`` multiplies both.
+    """
+
+    def __init__(self, path: str | Path, extcur: ArrayLike | None = None):
+        from scipy.interpolate import RegularGridInterpolator
+
+        with xr.open_dataset(path) as ds:
+            nfp = int(ds["nfp"])
+            ngroups = int(ds["nextcur"])
+            mode = "".join(np.atleast_1d(ds["mgrid_mode"].values).astype(str)).strip().upper()
+            raw = np.atleast_1d(ds["raw_coil_cur"].values).astype(float)
+            if extcur is None:
+                extcur = raw if mode.startswith("S") else np.ones(ngroups)
+            deck = np.atleast_1d(np.asarray(extcur, float))[:ngroups]
+            extcur = np.zeros(ngroups)
+            extcur[: len(deck)] = deck
+            tables = [
+                sum(extcur[g] * ds[f"{c}_{g + 1:03d}"].values for g in range(ngroups))
+                for c in ("br", "bp", "bz")
+            ]
+            r = np.linspace(float(ds["rmin"]), float(ds["rmax"]), int(ds["ir"]))
+            z = np.linspace(float(ds["zmin"]), float(ds["zmax"]), int(ds["jz"]))
+        kp = tables[0].shape[0]
+        self.nfp = nfp
+        if kp == 1:
+            self._interpolators = [
+                RegularGridInterpolator((z, r), t[0], method="cubic") for t in tables
+            ]
+        else:
+            # pad periodically in phi so that the cubic interpolation wraps around the field period
+            phi = np.arange(-2, kp + 2) * 2 * np.pi / (nfp * kp)
+            self._interpolators = [
+                RegularGridInterpolator(
+                    (phi, z, r), np.concatenate([t[-2:], t, t[:2]]), method="cubic"
+                )
+                for t in tables
+            ]
+
+    def eval_B(self, pos: ArrayLike):
+        """Evaluate the tabulated field at positions in xyz with shape (3,n_positions)."""
+        pos, stacked = _pos2dataarray(pos)
+        x, y, z = pos.values
+        R = np.hypot(x, y)
+        phi = np.arctan2(y, x)
+        if len(self._interpolators[0].grid) == 2:
+            points = np.stack([z, R], axis=-1)
+        else:
+            points = np.stack([np.mod(phi, 2 * np.pi / self.nfp), z, R], axis=-1)
+        BR, Bphi, BZ = (interp(points) for interp in self._interpolators)
+        B = np.stack(
+            [BR * np.cos(phi) - Bphi * np.sin(phi), BR * np.sin(phi) + Bphi * np.cos(phi), BZ]
+        )
+        ds = xr.Dataset(
+            data_vars=dict(B=(("xyz", "points"), B)),
+            coords={"xyz": ("xyz", ["x", "y", "z"])},
+        )
+        ds["pos"] = pos
+        ds.B.attrs = dict(long_name="magnetic field from mgrid", symbol=r"\mathbf{B}_C")
+        if stacked:
+            ds = _unstack_BS_ds(ds)
+        return ds
+
+
 class CoilSet(Coil, Mapping):
     def __init__(self, coils: list[Coil], coil_names: list[str] = None):
         """Initialize a coil set from a list of coils.

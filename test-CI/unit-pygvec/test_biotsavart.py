@@ -9,6 +9,7 @@ try:
         trace_fieldlines,
         intersection_planes_from_state,
         IntersectionPlane,
+        MgridField,
     )
     from gvec import State
     import tempfile
@@ -353,3 +354,57 @@ def test_intersection_planes_from_state(testfiles):
     planes = intersection_planes_from_state(state, zetas=[0.0, 1.0])
     assert len(planes) == 2
     assert set([type(p) for p in planes]) == {IntersectionPlane}
+
+
+def test_mgrid_field_matches_tabulated_field(tmp_path):
+    """A two-group mgrid gives sum(extcur * B_group) in Cartesian components."""
+    import xarray as xr
+
+    nfp, kp = 3, 24
+    r = np.linspace(0.5, 1.5, 81)
+    z = np.linspace(-0.5, 0.5, 81)
+    phi = np.arange(kp) * 2 * np.pi / (nfp * kp)
+    P, Z, R = np.meshgrid(phi, z, r, indexing="ij")
+    tables = {
+        "br_001": np.zeros_like(R),
+        "bp_001": 1.0 / R,
+        "bz_001": np.zeros_like(R),
+        "br_002": Z * np.cos(nfp * P),
+        "bp_002": np.zeros_like(R),
+        "bz_002": R * np.sin(nfp * P),
+    }
+    xr.Dataset(
+        {key: (("phi", "zee", "rad"), val) for key, val in tables.items()}
+        | dict(
+            ir=len(r),
+            jz=len(z),
+            kp=kp,
+            nfp=nfp,
+            nextcur=2,
+            rmin=r[0],
+            rmax=r[-1],
+            zmin=z[0],
+            zmax=z[-1],
+            mgrid_mode=(("dim_00001",), np.array(["S"])),
+            raw_coil_cur=(("external_coils",), np.array([1.0, 1.0])),
+        )
+    ).to_netcdf(tmp_path / "mgrid_test.nc")
+
+    field = MgridField(tmp_path / "mgrid_test.nc", extcur=[2.0, -0.5])
+    phi_eval = np.array([0.1, 2.0, -2.7])
+    R_eval = np.array([0.9, 1.2, 0.75])
+    Z_eval = np.array([0.1, -0.3, 0.2])
+    pos = np.stack([R_eval * np.cos(phi_eval), R_eval * np.sin(phi_eval), Z_eval])
+    B = field.eval_B(pos).B.values
+
+    BR = -0.5 * Z_eval * np.cos(nfp * phi_eval)
+    Bphi = 2.0 / R_eval
+    BZ = -0.5 * R_eval * np.sin(nfp * phi_eval)
+    expected = np.stack(
+        [
+            BR * np.cos(phi_eval) - Bphi * np.sin(phi_eval),
+            BR * np.sin(phi_eval) + Bphi * np.cos(phi_eval),
+            BZ,
+        ]
+    )
+    np.testing.assert_allclose(B, expected, atol=1e-5)

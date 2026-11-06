@@ -9,9 +9,20 @@ from typing import Literal
 
 import gvec
 from gvec.core.state import State
-from gvec.coils import CoilSet
+from gvec.coils import CoilSet, MgridField
 from .fixed_boundary import FixedBoundaryRun
 from .free_boundary import FreeBoundaryRun
+
+
+def _is_mgrid(path: Path | str) -> bool:
+    """Whether the file is a MAKEGRID mgrid table rather than a GVEC coil set."""
+    import xarray as xr
+
+    try:
+        with xr.open_dataset(path) as ds:
+            return "mgrid_mode" in ds
+    except (OSError, ValueError):
+        return False
 
 
 def run(
@@ -94,22 +105,25 @@ def run(
             "coil_set was handed as an input to run but is also present in the parameters! Either remove the coil_set from the specified parameters or do NOT hand it explicitly to gvec.run(...)."
         )
     elif has_coilset:
-        coil_set = parameters["free_boundary"]["coil_set"]
+        coil_set = params["free_boundary"]["coil_set"]
 
     match coil_set:
         case CoilSet():
             do_free_boundary = True
-            parameters["free_boundary"]["coil_set"] = "gvec-CoilSet"
+            params.setdefault("free_boundary", {})["coil_set"] = "gvec-CoilSet"
         case str() | Path():
             do_free_boundary = True
-            parameters["free_boundary"]["coil_set"] = str(coil_set)
-            coil_set = CoilSet.load(coil_set)
+            params.setdefault("free_boundary", {})["coil_set"] = str(coil_set)
+            if _is_mgrid(coil_set):
+                coil_set = MgridField(coil_set, params["free_boundary"].get("extcur"))
+            else:
+                coil_set = CoilSet.load(coil_set)
         case None:
             do_free_boundary = False
         case _:
             if hasattr(coil_set, "eval_B") and callable(coil_set.eval_B):
                 do_free_boundary = True
-                parameters["free_boundary"]["coil_set"] = "custom field evaluation"
+                params.setdefault("free_boundary", {})["coil_set"] = "custom field evaluation"
             else:
                 raise TypeError(
                     f"Unknown coil_set type, expected either 'str', 'Path', 'CoilSet' or 'None' but got {type(coil_set)} which does not have a method 'eval_B(...)'"

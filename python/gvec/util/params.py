@@ -616,8 +616,15 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
         ),
     )
 
-    if nml.get("lfreeb", False):
-        logger.warning("VMEC free boundary mode is not supported for conversion.")
+    mgrid_file = str(nml.get("mgrid_file", "none")).strip()
+    if nml.get("lfreeb", False) and mgrid_file.lower() not in ("", "none"):
+        params["free_boundary"] = dict(
+            coil_set=mgrid_file,
+            extcur=as_list(nml.get("extcur", [])),
+            updates=200,
+            tolerance=1e-3,
+            minimizer_type="dBFGS",
+        )
 
     # --- profiles --- #
     def sampled(values: np.ndarray) -> dict:
