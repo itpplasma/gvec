@@ -455,14 +455,11 @@ def _vmec_clamped_spline(s: np.ndarray, f: np.ndarray):
 
 def _vmec_sum_atan(c: np.ndarray, x: np.ndarray) -> np.ndarray:
     c = np.pad(c, (0, max(0, 21 - len(c))))
+    x = np.minimum(x, 1.0)
     y = np.full_like(x, c[0])
-    inner = x < 1.0
+    # ATAN2 takes each term to its limit at x = 1 for any exponent of (1 - x), as in PARVMEC
     for k in (1, 5, 9, 13, 17):
-        xi = x[inner]
-        y[inner] += (
-            2 / np.pi * c[k] * np.arctan(c[k + 1] * xi ** c[k + 2] / (1 - xi) ** c[k + 3])
-        )
-        y[~inner] += c[k]
+        y += 2 / np.pi * c[k] * np.arctan2(c[k + 1] * x ** c[k + 2], (1 - x) ** c[k + 3])
     return y
 
 
