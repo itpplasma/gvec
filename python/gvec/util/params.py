@@ -1123,6 +1123,7 @@ def profile_from_parameters(params: CaseInsensitiveDict) -> BSpline | Polynomial
         case "interpolation":
             k = 3
             vals = np.array(params["vals"], dtype=float)
+            vals *= params.get("scale", PARAMETER_SCALE_DEFAULT)
             rho2 = np.array(params["rho2"], dtype=float)
             if min(np.sqrt(rho2)) > PROFILE_INTERPOLATION_RHO2_MIN:
                 rho2 = np.append([0.0], rho2)

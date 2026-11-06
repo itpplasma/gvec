@@ -272,6 +272,13 @@ def test_parameters_from_vmec_converts_vmec_profile_types():
     iota = profile_from_parameters(params["iota"])(s)
     np.testing.assert_allclose(iota, 1 + s**2, rtol=1e-10)
 
+    # the zeta flip of the VMEC conversion reverses the current through its scale
+    flipped = util.flip_parameters_zeta(params)
+    np.testing.assert_allclose(
+        profile_from_parameters(flipped["I_tor"])(1.0),
+        -profile_from_parameters(params["I_tor"])(1.0),
+    )
+
     del nml["curtor"]
     assert (
         profile_from_parameters(util.parameters_from_vmec(nml, "no_curtor")["I_tor"])(0.5)
