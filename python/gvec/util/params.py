@@ -621,9 +621,15 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
         params["free_boundary"] = dict(
             coil_set=mgrid_file,
             extcur=as_list(nml.get("extcur", [])),
-            updates=200,
-            tolerance=1e-3,
-            minimizer_type="dBFGS",
+            method="newton",
+            updates=40,
+            tolerance=1e-6,
+            newton_gtol=1e-5,
+            newton_xtol=1e-7,
+            newton_fd_step=1e-4,
+            newton_max_step=0.05,
+            ramp_force_tol=False,
+            digits_BIEST=8,
         )
 
     # --- profiles --- #
