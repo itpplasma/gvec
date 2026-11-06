@@ -236,6 +236,49 @@ def test_parameters_from_vmec_accepts_sparse_boundary_arrays():
     }
 
 
+def test_parameters_from_vmec_converts_vmec_profile_types():
+    """Non-polynomial VMEC profiles convert to the profiles VMEC evaluates."""
+    import f90nml
+
+    from gvec.util.params import profile_from_parameters
+
+    nml = f90nml.reads(
+        """
+&INDATA
+  NCURR = 1  CURTOR = 2.0E5
+  PMASS_TYPE = 'two_power'  AM = 1.0E4 1.0 2.0
+  PCURR_TYPE = 'sum_atan'  AC = 0.0 1.0 2.0 1.0 1.0
+  PIOTA_TYPE = 'cubic_spline'
+  AI_AUX_S = 0.0 0.25 0.5 0.75 1.0
+  AI_AUX_F = 1.0 1.0625 1.25 1.5625 2.0
+  RBC(0, 0) = 1.0  RBC(0, 1) = 0.1  ZBS(0, 1) = 0.1
+/
+"""
+    )["indata"]
+    params = util.parameters_from_vmec(nml, "profiles")
+    s = np.array([0.0, 0.3, 0.7, 1.0])
+
+    pres = profile_from_parameters(params["pres"])(s)
+    np.testing.assert_allclose(pres, 1.0e4 * (1 - s) ** 2, rtol=1e-8, atol=1e-6)
+
+    def atan_current(x):
+        return 2 / np.pi * np.arctan(2 * x / (1 - np.minimum(x, 1 - 1e-300)))
+
+    current = profile_from_parameters(params["I_tor"])(s[:-1])
+    np.testing.assert_allclose(current, 2.0e5 * atan_current(s[:-1]), rtol=1e-8, atol=1e-6)
+    np.testing.assert_allclose(profile_from_parameters(params["I_tor"])(1.0), 2.0e5)
+
+    # the knots lie on 1 + s**2, which VMEC's clamped spline reproduces exactly
+    iota = profile_from_parameters(params["iota"])(s)
+    np.testing.assert_allclose(iota, 1 + s**2, rtol=1e-10)
+
+    del nml["curtor"]
+    assert (
+        profile_from_parameters(util.parameters_from_vmec(nml, "no_curtor")["I_tor"])(0.5)
+        == 0.0
+    )
+
+
 def test_ev2vtk(testcaserundir, testfiles):
     rho = np.linspace(0, 1, 4)
     theta = np.linspace(0, 2 * np.pi, 5)  # including endpoints

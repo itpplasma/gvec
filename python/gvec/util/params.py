@@ -424,6 +424,141 @@ def read_parameter_file_ini(path: str | Path) -> CaseInsensitiveDict:
     return parameters
 
 
+VMEC_PROFILE_SAMPLES = 1001
+
+
+def _vmec_aux(nml: Mapping, prefix: str) -> tuple[np.ndarray, np.ndarray]:
+    s = np.atleast_1d(np.asarray(nml.get(f"{prefix}_aux_s", []), dtype=float))
+    f = np.atleast_1d(np.asarray(nml.get(f"{prefix}_aux_f", []), dtype=float))
+    f = np.pad(f, (0, max(0, len(s) - len(f))))
+    # VMEC ends the knot list at the first non-increasing abscissa (zero padding)
+    n = len(s)
+    for i in range(1, len(s)):
+        if s[i] <= s[i - 1]:
+            n = i
+            break
+    return s[:n], f[:n]
+
+
+def _vmec_clamped_spline(s: np.ndarray, f: np.ndarray):
+    from scipy.interpolate import CubicSpline
+
+    # end slopes from the quadratic through the outer three points, as in LIBSTELL spline_cubic
+    c = ((f[2] - f[0]) / (s[2] - s[0]) - (f[1] - f[0]) / (s[1] - s[0])) / (s[2] - s[1])
+    yp1 = (f[1] - f[0]) / (s[1] - s[0]) - c * (s[1] - s[0])
+    c = ((f[-3] - f[-1]) / (s[-3] - s[-1]) - (f[-2] - f[-1]) / (s[-2] - s[-1])) / (
+        s[-3] - s[-2]
+    )
+    ypn = (f[-2] - f[-1]) / (s[-2] - s[-1]) - c * (s[-2] - s[-1])
+    return CubicSpline(s, f, bc_type=((1, yp1), (1, ypn)))
+
+
+def _vmec_sum_atan(c: np.ndarray, x: np.ndarray) -> np.ndarray:
+    c = np.pad(c, (0, max(0, 21 - len(c))))
+    y = np.full_like(x, c[0])
+    inner = x < 1.0
+    for k in (1, 5, 9, 13, 17):
+        xi = x[inner]
+        y[inner] += (
+            2 / np.pi * c[k] * np.arctan(c[k + 1] * xi ** c[k + 2] / (1 - xi) ** c[k + 3])
+        )
+        y[~inner] += c[k]
+    return y
+
+
+def _gauss_legendre_integral(fprime, x: np.ndarray) -> np.ndarray:
+    nodes, weights = np.polynomial.legendre.leggauss(10)
+    nodes, weights = 0.5 * (nodes + 1), 0.5 * weights
+    return np.array([xi * np.sum(weights * fprime(xi * nodes)) for xi in x])
+
+
+def vmec_profile(nml: Mapping, kind: Literal["pmass", "piota", "pcurr"]) -> np.ndarray:
+    """Evaluate a VMEC input profile on ``s = linspace(0, 1, VMEC_PROFILE_SAMPLES)``.
+
+    Follows LIBSTELL ``profile_functions.f``: ``pmass`` without ``mu0*pres_scale``,
+    ``piota`` as iota, and ``pcurr`` as the enclosed current I(s), not yet scaled to CURTOR.
+    """
+    from scipy.interpolate import Akima1DInterpolator
+
+    prefix = {"pmass": "am", "piota": "ai", "pcurr": "ac"}[kind]
+    ptype = str(nml.get(f"{kind}_type", "power_series")).strip().lower()
+    c = np.atleast_1d(np.asarray(nml.get(prefix, [0.0]), dtype=float))
+    c = np.nan_to_num(c)
+    s = np.linspace(0.0, 1.0, VMEC_PROFILE_SAMPLES)
+    x = np.minimum(np.abs(s * nml.get("bloat", 1.0)), 1.0) if kind != "piota" else s
+    aux_s, aux_f = _vmec_aux(nml, prefix)
+    current_density = kind == "pcurr" and ptype in ("power_series", "two_power", "gauss_trunc")
+
+    def line_segments(xv):
+        return np.interp(xv, aux_s, aux_f) + np.where(
+            xv > aux_s[-1],
+            (xv - aux_s[-1]) * (aux_f[-1] - aux_f[-2]) / (aux_s[-1] - aux_s[-2]),
+            0.0,
+        )
+
+    match ptype:
+        case "power_series":
+            if current_density:
+                return x * Polynomial(c / np.arange(1, len(c) + 1))(x)
+            return Polynomial(c)(x)
+        case "power_series_i":
+            return x * Polynomial(c)(x)
+        case "two_power":
+
+            def two_power(xv):
+                return c[0] * (1 - xv ** c[1]) ** c[2]
+
+            return _gauss_legendre_integral(two_power, x) if current_density else two_power(x)
+        case "gauss_trunc":
+            if current_density:
+                return _gauss_legendre_integral(
+                    lambda xv: c[0]
+                    * (np.exp(-((xv / c[1]) ** 2)) - np.exp(-((1 / c[1]) ** 2))),
+                    x,
+                )
+            return (
+                c[0]
+                / (1 - np.exp(-((1 / c[1]) ** 2)))
+                * (np.exp(-((x / c[1]) ** 2)) - np.exp(-((1 / c[1]) ** 2)))
+            )
+        case "two_lorentz":
+
+            def lorentz(width, power1, power2, xv):
+                return 1 / (1 + (xv / width**2) ** power1) ** power2
+
+            return c[0] * (
+                c[1]
+                * (lorentz(c[2], c[3], c[4], x) - lorentz(c[2], c[3], c[4], 1.0))
+                / (1 - lorentz(c[2], c[3], c[4], 1.0))
+                + (1 - c[1])
+                * (lorentz(c[5], c[6], c[7], x) - lorentz(c[5], c[6], c[7], 1.0))
+                / (1 - lorentz(c[5], c[6], c[7], 1.0))
+            )
+        case "sum_atan":
+            return _vmec_sum_atan(c, x)
+        case "line_segment" | "line_segment_i":
+            return line_segments(x)
+        case "line_segment_ip":
+            fine = np.union1d(x, aux_s[(aux_s > 0) & (aux_s < 1)])
+            prime = line_segments(fine)
+            integral = np.concatenate(
+                [[0.0], np.cumsum(0.5 * (prime[1:] + prime[:-1]) * np.diff(fine))]
+            )
+            return np.interp(x, fine, integral)
+        case "cubic_spline" | "cubic_spline_i":
+            return _vmec_clamped_spline(aux_s, aux_f)(x)
+        case "cubic_spline_ip":
+            return _vmec_clamped_spline(aux_s, aux_f).antiderivative()(x)
+        case "akima_spline" | "akima_spline_i":
+            return Akima1DInterpolator(aux_s, aux_f)(x)
+        case "akima_spline_ip":
+            return Akima1DInterpolator(aux_s, aux_f).antiderivative()(x)
+        case _:
+            raise ValueError(
+                f"VMEC {kind} profile of type {ptype} is not supported for conversion"
+            )
+
+
 def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
     def rectangular_boundary_values(value) -> np.ndarray:
         """Convert f90nml's sparse, possibly ragged boundary array to 2-D."""
@@ -479,53 +614,65 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
         logger.warning("VMEC free boundary mode is not supported for conversion.")
 
     # --- profiles --- #
-    if "pmass_type" not in nml:
-        logger.warning("No pressure profile type defined, assuming 'power_series'.")
-    elif nml["pmass_type"] != "power_series":
-        raise ValueError(
-            f"VMEC pressure profile of type {nml['pmass_type']} is not supported for conversion"
-        )
-    if "am" in nml:
-        params["pres"] = {
-            "type": "polynomial",
-            "coefs": as_list(nml["am"]),
-            "scale": nml.get("pres_scale", 1.0),
+    def sampled(values: np.ndarray) -> dict:
+        return {
+            "type": "interpolation",
+            "rho2": np.linspace(0.0, 1.0, len(values)),
+            "vals": values,
         }
+
+    def power_series(kind: str) -> bool:
+        return str(nml.get(f"{kind}_type", "power_series")).strip().lower() == "power_series"
+
+    if "am" in nml or "am_aux_f" in nml:
+        spres_ped = abs(nml.get("spres_ped", 1.0))
+        if power_series("pmass") and nml.get("bloat", 1.0) == 1.0 and spres_ped >= 1.0:
+            params["pres"] = {
+                "type": "polynomial",
+                "coefs": as_list(nml["am"]),
+                "scale": nml.get("pres_scale", 1.0),
+            }
+        else:
+            pres = nml.get("pres_scale", 1.0) * vmec_profile(nml, "pmass")
+            s_pres = np.linspace(0.0, 1.0, len(pres))
+            # VMEC holds the pressure at its pedestal value outside SPRES_PED (profil1d)
+            pres = np.where(s_pres > spres_ped, np.interp(spres_ped, s_pres, pres), pres)
+            params["pres"] = sampled(pres)
     else:
         logger.warning("No pressure profile defined.")
 
-    if "piota_type" not in nml:
-        logger.warning("No iota profile type defined, assuming 'power_series'.")
-    elif nml["piota_type"] != "power_series":
-        raise ValueError(
-            f"VMEC iota profile of type {nml['piota_type']} is not supported for conversion"
-        )
-    if "ai" in nml:
-        params["iota"] = {
-            "type": "polynomial",
-            "coefs": as_list(nml["ai"]),
-        }
+    if "ai" in nml or "ai_aux_f" in nml:
+        if power_series("piota") and not nml.get("lrfp", False):
+            params["iota"] = {
+                "type": "polynomial",
+                "coefs": as_list(nml["ai"]),
+            }
+        else:
+            iota = vmec_profile(nml, "piota")
+            params["iota"] = sampled(1.0 / iota if nml.get("lrfp", False) else iota)
 
     if nml.get("ncurr", 0) == 1:  # ncurr = 0: flux conservation | ncurr = 1: current constraint
-        if "pcurr_type" not in nml:
-            logger.warning("No current profile type defined, assuming 'power_series'.")
-        elif nml["pcurr_type"] != "power_series":
-            raise ValueError(
-                f"VMEC current profile of type {nml['pcurr_type']} is not supported for conversion"
-            )
-        params["I_tor"] = {"type": "polynomial"}
-        if nml["curtor"] == 0.0:
-            params["I_tor"]["coefs"] = [0.0]
-            params["I_tor"]["scale"] = 1.0
-        else:
+        curtor = nml.get("curtor", 0.0)
+        if curtor == 0.0:
+            params["I_tor"] = {"type": "polynomial", "coefs": [0.0], "scale": 1.0}
+        elif power_series("pcurr") and nml.get("bloat", 1.0) == 1.0:
             coefs = [0] + [
-                p / (i + 1) for i, p in enumerate(as_list(nml["ac"]))
+                p / (i + 1) for i, p in enumerate(as_list(nml.get("ac", [0.0])))
             ]  # I'(s) -> I(s)
-            params["I_tor"]["coefs"] = coefs
+            params["I_tor"] = {"type": "polynomial", "coefs": coefs}
             if sum(coefs) == 0.0:
                 params["I_tor"]["scale"] = 1.0
             else:
-                params["I_tor"]["scale"] = nml["curtor"] / sum(coefs)
+                params["I_tor"]["scale"] = curtor / sum(coefs)
+        else:
+            current = vmec_profile(nml, "pcurr")
+            # VMEC drops the current when the profile vanishes at the edge
+            scale = (
+                curtor / current[-1]
+                if abs(current[-1]) > abs(np.finfo(float).eps * curtor)
+                else 0.0
+            )
+            params["I_tor"] = sampled(scale * current)
         params["picard_current"] = "auto"
     if "ai" not in nml and nml.get("ncurr", 0) == 0:
         logger.warning("No iota or current profile defined.")
