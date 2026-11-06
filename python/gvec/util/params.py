@@ -424,7 +424,16 @@ def read_parameter_file_ini(path: str | Path) -> CaseInsensitiveDict:
     return parameters
 
 
-VMEC_PROFILE_SAMPLES = 1001
+VMEC_PROFILE_SAMPLES = 401
+
+
+def vmec_profile_grid() -> np.ndarray:
+    """Normalised flux samples for converted VMEC profiles, clustered at both ends
+    where VMEC profiles steepen; 401 values keep a parameter-file line below
+    GVEC's 16384 characters."""
+    return 0.5 * (
+        1 - np.cos(np.pi * np.arange(VMEC_PROFILE_SAMPLES) / (VMEC_PROFILE_SAMPLES - 1))
+    )
 
 
 def _vmec_aux(nml: Mapping, prefix: str) -> tuple[np.ndarray, np.ndarray]:
@@ -470,7 +479,7 @@ def _gauss_legendre_integral(fprime, x: np.ndarray) -> np.ndarray:
 
 
 def vmec_profile(nml: Mapping, kind: Literal["pmass", "piota", "pcurr"]) -> np.ndarray:
-    """Evaluate a VMEC input profile on ``s = linspace(0, 1, VMEC_PROFILE_SAMPLES)``.
+    """Evaluate a VMEC input profile on ``s = vmec_profile_grid()``.
 
     Follows LIBSTELL ``profile_functions.f``: ``pmass`` without ``mu0*pres_scale``,
     ``piota`` as iota, and ``pcurr`` as the enclosed current I(s), not yet scaled to CURTOR.
@@ -481,7 +490,7 @@ def vmec_profile(nml: Mapping, kind: Literal["pmass", "piota", "pcurr"]) -> np.n
     ptype = str(nml.get(f"{kind}_type", "power_series")).strip().lower()
     c = np.atleast_1d(np.asarray(nml.get(prefix, [0.0]), dtype=float))
     c = np.nan_to_num(c)
-    s = np.linspace(0.0, 1.0, VMEC_PROFILE_SAMPLES)
+    s = vmec_profile_grid()
     x = np.minimum(np.abs(s * nml.get("bloat", 1.0)), 1.0) if kind != "piota" else s
     aux_s, aux_f = _vmec_aux(nml, prefix)
     current_density = kind == "pcurr" and ptype in ("power_series", "two_power", "gauss_trunc")
@@ -614,7 +623,7 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
     def sampled(values: np.ndarray) -> dict:
         return {
             "type": "interpolation",
-            "rho2": np.linspace(0.0, 1.0, len(values)),
+            "rho2": vmec_profile_grid(),
             "vals": values,
         }
 
@@ -631,7 +640,7 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
             }
         else:
             pres = nml.get("pres_scale", 1.0) * vmec_profile(nml, "pmass")
-            s_pres = np.linspace(0.0, 1.0, len(pres))
+            s_pres = vmec_profile_grid()
             # VMEC holds the pressure at its pedestal value outside SPRES_PED (profil1d)
             pres = np.where(s_pres > spres_ped, np.interp(spres_ped, s_pres, pres), pres)
             params["pres"] = sampled(pres)
