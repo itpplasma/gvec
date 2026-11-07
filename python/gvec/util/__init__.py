@@ -13,6 +13,7 @@ from .util import (
 )
 from .geometry import (
     axis_from_boundary,  # Needs docstrings
+    guess_axis,
     boundary_generator,
     boundary_generator_cases,
     check_boundary_direction,

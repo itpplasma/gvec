@@ -65,19 +65,35 @@ class FixedBoundaryRun(AbstractRun):
             shutil.rmtree(self.rundir)
         self.rundir.mkdir()
         self.logger.debug(f"Created run directory {self.rundir}")
-        self.state = MinimizationState.new(
-            self._state_parameters,
-            rundir=self.rundir,
-            statefile=self.state.statefile,
-            stdout_path=self.rundir / "stdout.txt",
-            redirect_stdout=self.redirect_gvec_stdout,
-            header=[
-                "GVEC parameter file",
-                f"Auto-generated with `pygvec run` (stage {self.nth_stage})",
-                f"Created at {datetime.now().isoformat()}",
-                f"pyGVEC v{gvec.__version__}",
-            ],
-        )
+
+        def new_state():
+            return MinimizationState.new(
+                self._state_parameters,
+                rundir=self.rundir,
+                statefile=self.state.statefile,
+                stdout_path=self.rundir / "stdout.txt",
+                redirect_stdout=self.redirect_gvec_stdout,
+                header=[
+                    "GVEC parameter file",
+                    f"Auto-generated with `pygvec run` (stage {self.nth_stage})",
+                    f"Created at {datetime.now().isoformat()}",
+                    f"pyGVEC v{gvec.__version__}",
+                ],
+            )
+
+        try:
+            self.state = new_state()
+        except gvec.errors.InitializationError as error:
+            if "JACOBIAN" not in str(error) or self.state.statefile:
+                raise
+            # as VMEC does after a bad initial Jacobian: guess the axis and start again
+            self.logger.warning(f"{error} Retrying with a guessed axis.")
+            guessed = gvec.util.guess_axis(self._state_parameters)
+            for params in (self.parameters, self._state_parameters):
+                params.pop("init_average_axis", None)
+                axis_keys = ("X1_a_cos", "X1_a_sin", "X2_a_cos", "X2_a_sin")
+                params.update({key: guessed[key] for key in axis_keys if key in guessed})
+            self.state = new_state()
 
         with gvec.util.chdir(self.rundir):
             # write parameterfile & run GVEC
