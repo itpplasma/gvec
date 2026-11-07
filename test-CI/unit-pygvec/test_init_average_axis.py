@@ -136,3 +136,20 @@ def test_init_average_axis_clockwise_ellipse(parameters, tmp_path):
     finally:
         if gvec.core.state._binding.bound_state is state:
             state.unbind()
+
+
+def test_run_guesses_axis_after_bad_jacobian(parameters, tmp_path):
+    # an axis near the outer edge makes the initial Jacobian change sign
+    parameters.update(
+        init_average_axis=False,
+        X1_mn_max=(1, 0),
+        X2_mn_max=(1, 0),
+        LA_mn_max=(1, 0),
+        X2_b_sin={(1, 0): 0.9},
+        X1_a_cos={(0, 0): 5.8},
+        totalIter=5,
+    )
+    guessed = gvec.util.guess_axis(parameters)
+    np.testing.assert_allclose(guessed["X1_a_cos"][0, 0], 5.0, atol=1e-6)
+    run = gvec.run(parameters, runpath=tmp_path, quiet=True)
+    assert np.isfinite(run.max_force)

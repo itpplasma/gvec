@@ -247,6 +247,76 @@ def axis_from_boundary(parameters: MutableMapping) -> MutableMapping:
     return parameters2
 
 
+def guess_axis(
+    parameters: MutableMapping, n_rho: int = 50, n_theta: int = 128
+) -> MutableMapping:
+    """Axis that keeps the Jacobian of the initial interpolation as far from zero as possible.
+
+    In each toroidal plane the initial guess (axis blended into the m = 0 boundary modes like
+    1 - rho^2, the other modes scaled like rho^m) has a Jacobian that is linear in the axis
+    position, so the axis maximising its minimum solves a linear program, as VMEC's guess_axis
+    does by a grid search. The planes are then fitted with the axis Fourier modes.
+    """
+    from scipy.optimize import linprog
+
+    nfp = parameters.get("nfp", 1)
+    N = parameters["X1_mn_max"][1]
+    asym = "X1_b_sin" in parameters or "X2_b_cos" in parameters
+    rho = np.linspace(1.0 / n_rho, 1.0, n_rho)[:, None]
+    theta = np.linspace(0, 2 * np.pi, n_theta, endpoint=False)[None, :]
+    zeta = np.linspace(0, 2 * np.pi / nfp, 2 * N + 2, endpoint=False)
+    axis = np.zeros((2, zeta.size))
+    for k, z in enumerate(zeta):
+        d = {}
+        for x, kinds in (("X1", ("cos", "sin")), ("X2", ("sin", "cos"))):
+            d_rho, d_theta = np.zeros((n_rho, n_theta)), np.zeros((n_rho, n_theta))
+            for kind in kinds:
+                for (m, n), value in parameters.get(f"{x}_b_{kind}", {}).items():
+                    phase = m * theta - n * nfp * z
+                    f, df = (
+                        (np.cos(phase), -np.sin(phase))
+                        if kind == "cos"
+                        else (np.sin(phase), np.cos(phase))
+                    )
+                    d_rho = d_rho + value * f * (2 * rho if m == 0 else m * rho ** (m - 1))
+                    d_theta = d_theta + value * m * df * rho**m
+            d[x] = d_rho, d_theta
+        (r1, t1), (r2, t2) = d["X1"], d["X2"]
+        # Jacobian / rho = J0 - 2 X1_axis dX2/dtheta + 2 X2_axis dX1/dtheta
+        J0, A, B = (
+            ((r1 * t2 - r2 * t1) / rho).ravel(),
+            (-2 * t2).ravel(),
+            (2 * t1).ravel(),
+        )
+        sign = np.sign(np.median(J0))
+        # maximise the smallest Jacobian t: sign * (J0 + A x1 + B x2) >= t
+        res = linprog(
+            [0, 0, -1],
+            A_ub=np.stack([-sign * A, -sign * B, np.ones_like(A)], axis=1),
+            b_ub=sign * J0,
+            bounds=[(None, None), (None, None), (None, np.abs(J0).max())],
+            method="highs",
+        )
+        axis[:, k] = res.x[:2]
+    n = np.arange(N + 1)
+    cos, sin = np.cos(np.outer(nfp * zeta, n)), np.sin(np.outer(nfp * zeta, n))
+    parameters2 = deepcopy(parameters)
+    parameters2.pop("init_average_axis", None)
+    # the axis modes are cos/sin(-n nfp zeta), so the sine coefficients change sign
+    for x, row in (("X1", 0), ("X2", 1)):
+        even, odd = ("cos", "sin") if x == "X1" else ("sin", "cos")
+        basis = {"cos": cos, "sin": -sin[:, 1:]}
+        kinds = (even, odd) if asym else (even,)
+        columns = np.concatenate([basis[kind] for kind in kinds], axis=1)
+        coefs = np.linalg.lstsq(columns, axis[row], rcond=None)[0]
+        for kind in kinds:
+            size = basis[kind].shape[1]
+            offset = 0 if kind == "cos" else 1
+            values, coefs = coefs[:size], coefs[size:]
+            parameters2[f"{x}_a_{kind}"] = {(0, i + offset): v for i, v in enumerate(values)}
+    return parameters2
+
+
 def ellipse_circumference_factor(epsilon: float) -> float:
     """
     Compute the circumference factor of an ellipse with elongation epsilon.
