@@ -30,3 +30,31 @@ def test_converted_wout_state_can_be_reloaded(tmp_path, signgs, asymmetric):
         np.testing.assert_allclose(position, [radius, 0.0, height], rtol=1e-10, atol=1e-12)
     finally:
         converted.unbind()
+
+
+@pytest.mark.parametrize("asymmetric", ["F", "T"])
+def test_run_continues_from_wout(tmp_path, asymmetric):
+    import gvec
+
+    source = Path(__file__).parents[1] / "data" / f"wout_test-signgs-neg-asym{asymmetric}.nc"
+    parameters = dict(
+        ProjectName="wout",
+        whichInitEquilibrium=1,
+        VMECwoutfile=str(source),
+        init_LA=False,
+        sgrid_nElems=4,
+        X1X2_deg=5,
+        LA_deg=5,
+        totalIter=2,
+        minimize_tol=1e-12,
+    )
+    run = gvec.run(parameters, runpath=tmp_path, quiet=True)
+    position = np.asarray(run.state.evaluate("pos", rho=1.0, theta=0.0, zeta=0.0).pos).reshape(
+        3
+    )
+    # the stages after the initialisation keep the wout's fixed boundary
+    with netCDF4.Dataset(source) as wout:
+        radius = np.sum(wout["rmnc"][-1, :])
+        height = np.sum(wout["zmnc"][-1, :]) if "zmnc" in wout.variables else 0.0
+        assert run.state.nfp == int(wout["nfp"][:])
+    np.testing.assert_allclose(position, [radius, 0.0, height], rtol=1e-10, atol=1e-12)

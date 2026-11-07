@@ -119,6 +119,7 @@ class AbstractRun(ABC):
                 self.parameters["boundary_perturb"] = False
             # move init from vmec to initial stage
             if self.parameters.get("whichInitEquilibrium", 0) == 1:
+                self._take_wout_parameters()
                 self.stages[0]["whichInitEquilibrium"] = 1
                 self.parameters["whichInitEquilibrium"] = 0
 
@@ -207,6 +208,22 @@ class AbstractRun(ABC):
             project_dir / parameters_stages_name,
         )
 
+    def _take_wout_parameters(self):
+        """Give the stages after the VMEC initialisation the wout's boundary, flux and profiles."""
+        from gvec.scripts.convert_wout import convert_vmec_wout
+
+        wout = convert_vmec_wout(
+            Path(self.parameters["VMECwoutfile"]),
+            VMECwoutfile_format=int(self.parameters.get("VMECwoutfile_format", 0)),
+        )
+        for key, value in wout.items():
+            # the discretisation stays as the parameter file sets it for every stage
+            if (
+                key.lower() not in ("sgrid", "x1x2_deg", "la_deg")
+                and key not in self.parameters
+            ):
+                self.parameters[key] = value
+
     def _reset_params_to_original(self):
         """
         Reset the parameters to the original values. Except for `iota` and `maxIter`, which is limited by `totaliter`.
@@ -214,7 +231,8 @@ class AbstractRun(ABC):
         params = self.parameters.copy()
         if "stages" in params:
             del params["stages"]
-        params["iota"] = self._state_parameters["iota"]
+        if "iota" in self._state_parameters:
+            params["iota"] = self._state_parameters["iota"]
         params["maxIter"] = min(
             self.totaliter - self.GVEC_iter_used,
             self.parameters.get("maxIter", self.totaliter),
