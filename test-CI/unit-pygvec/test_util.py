@@ -262,6 +262,19 @@ def test_parameters_from_vmec_reads_legacy_and_scalar_axis():
     assert "init_average_axis" not in parameters
 
 
+def test_parameters_from_vmec_defaults_to_zero_pressure():
+    import f90nml
+
+    nml = f90nml.reads("&INDATA\n  RBC(0, 0) = 5.5  RBC(0, 1) = 0.7  ZBS(0, 1) = 0.7\n/\n")[
+        "indata"
+    ]
+
+    assert util.parameters_from_vmec(nml, "no_pressure")["pres"] == {
+        "type": "polynomial",
+        "coefs": [0.0],
+    }
+
+
 def test_parameters_from_vmec_converts_vmec_profile_types():
     """Non-polynomial VMEC profiles convert to the profiles VMEC evaluates."""
     import f90nml

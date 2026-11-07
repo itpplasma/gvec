@@ -646,7 +646,8 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
             pres = np.where(s_pres > spres_ped, np.interp(spres_ped, s_pres, pres), pres)
             params["pres"] = sampled(pres)
     else:
-        logger.warning("No pressure profile defined.")
+        # VMEC's default AM is zero
+        params["pres"] = {"type": "polynomial", "coefs": [0.0]}
 
     if "ai" in nml or "ai_aux_f" in nml:
         if power_series("piota") and not nml.get("lrfp", False):
