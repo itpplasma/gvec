@@ -278,8 +278,16 @@ def guess_axis(
                         if kind == "cos"
                         else (np.sin(phase), np.cos(phase))
                     )
-                    d_rho = d_rho + value * f * (2 * rho if m == 0 else m * rho ** (m - 1))
-                    d_theta = d_theta + value * m * df * rho**m
+                    # init_low_radial_power: modes m >= 2 scale like rho^2 or rho^3, by parity
+                    power = (
+                        min(m, 2 + m % 2)
+                        if parameters.get("init_low_radial_power", False)
+                        else m
+                    )
+                    d_rho = d_rho + value * f * (
+                        2 * rho if m == 0 else power * rho ** (power - 1)
+                    )
+                    d_theta = d_theta + value * m * df * rho**power
             d[x] = d_rho, d_theta
         (r1, t1), (r2, t2) = d["X1"], d["X2"]
         # Jacobian / rho = J0 - 2 X1_axis dX2/dtheta + 2 X2_axis dX1/dtheta

@@ -153,3 +153,23 @@ def test_run_guesses_axis_after_bad_jacobian(parameters, tmp_path):
     np.testing.assert_allclose(guessed["X1_a_cos"][0, 0], 5.0, atol=1e-6)
     run = gvec.run(parameters, runpath=tmp_path, quiet=True)
     assert np.isfinite(run.max_force)
+
+
+def test_run_lowers_radial_power_after_bad_jacobian(parameters, tmp_path):
+    # STELLOPT's belt pinch folds over near the edge for every axis when modes scale like rho^m
+    parameters.update(
+        init_average_axis=False,
+        X1_mn_max=(5, 0),
+        X2_mn_max=(5, 0),
+        LA_mn_max=(5, 0),
+        X1_b_cos={(0, 0): 3.0, (1, 0): 0.465, (3, 0): -0.0158},
+        X2_b_sin={(1, 0): 0.6, (3, 0): 0.177, (5, 0): -0.0197},
+        X1_a_cos={(0, 0): 3.0},
+        sgrid_nElems=5,
+        X1X2_deg=5,
+        LA_deg=5,
+        totalIter=5,
+    )
+    run = gvec.run(parameters, runpath=tmp_path, quiet=True)
+    assert run.state.parameters["init_low_radial_power"]
+    assert np.isfinite(run.max_force)

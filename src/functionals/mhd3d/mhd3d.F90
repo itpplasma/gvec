@@ -369,6 +369,7 @@ SUBROUTINE InitMHD3D(sf)
   !INITIALIZATION PARAMETERS (ONLY NECESSARY ON MPIroot)
   IF(MPIroot)THEN
     init_average_axis= GETLOGICAL("init_average_axis",Proposal=.FALSE.)
+    init_low_radial_power= GETLOGICAL("init_low_radial_power",Proposal=.FALSE.)
     IF(init_average_axis)THEN
       average_axis_move(1) = GETREAL("average_axis_move_X1",Proposal=0.0_wp)
       average_axis_move(2) = GETREAL("average_axis_move_X2",Proposal=0.0_wp)
@@ -940,7 +941,7 @@ END SUBROUTINE InitAverageAxis
 SUBROUTINE InitSolution(U_init,which_init_in)
 ! MODULES
   USE MODgvec_Globals,       ONLY:ProgressBar,getTime
-  USE MODgvec_MHD3D_Vars   , ONLY:init_fromBConly,init_BC,init_average_axis,average_axis_move
+  USE MODgvec_MHD3D_Vars   , ONLY:init_fromBConly,init_BC,init_average_axis,average_axis_move,init_low_radial_power
   USE MODgvec_MHD3D_Vars   , ONLY:X1_base,X1_BC_Type,X1_a,X1_b
   USE MODgvec_MHD3D_Vars   , ONLY:X2_base,X2_BC_Type,X2_a,X2_b
   USE MODgvec_MHD3D_Vars   , ONLY:LA_base,LA_BC_Type,init_LA
@@ -1093,7 +1094,7 @@ SUBROUTINE InitSolution(U_init,which_init_in)
         X1_gIP(:,iMode)=s_IP(:)*X1_b(iMode)      ! first odd mode ~s
       CASE DEFAULT ! ~s^m
         X1_gIP(:,iMode)=s_IP(:)*X1_b(iMode)
-        DO i_m=2,X1_base%f%Xmn(1,iMode)
+        DO i_m=2,radial_power(X1_base%f%Xmn(1,iMode))
           X1_gIP(:,iMode)=X1_gIP(:,iMode)*s_IP(:)
         END DO
       END SELECT !X1(:,iMode) zero odd even
@@ -1111,7 +1112,7 @@ SUBROUTINE InitSolution(U_init,which_init_in)
         X2_gIP(:,iMode)=s_IP(:)*X2_b(iMode)      ! first odd mode ~s
       CASE DEFAULT ! ~s^m
         X2_gIP(:,iMode)=s_IP(:)*X2_b(iMode)
-        DO i_m=2,X2_base%f%Xmn(1,iMode)
+        DO i_m=2,radial_power(X2_base%f%Xmn(1,iMode))
           X2_gIP(:,iMode)=X2_gIP(:,iMode)*s_IP(:)
         END DO
       END SELECT !X2(:,iMode) zero odd even
@@ -1173,6 +1174,16 @@ SUBROUTINE InitSolution(U_init,which_init_in)
   END DO !iMode
 
   END ASSOCIATE !LA
+CONTAINS
+
+  !> power of rho with which a boundary mode m enters the initial guess
+  PURE INTEGER FUNCTION radial_power(m)
+    INTEGER, INTENT(IN) :: m
+    radial_power = m
+    ! a lower power keeps strongly shaped boundaries from folding over near the edge
+    IF(init_low_radial_power) radial_power = MIN(m, 2 + MOD(m, 2))
+  END FUNCTION radial_power
+
 END SUBROUTINE InitSolution
 
 
