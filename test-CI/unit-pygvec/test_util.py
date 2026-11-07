@@ -236,6 +236,32 @@ def test_parameters_from_vmec_accepts_sparse_boundary_arrays():
     }
 
 
+def test_parameters_from_vmec_reads_legacy_and_scalar_axis():
+    """VMEC copies nonzero RAXIS and ZAXIS entries into RAXIS_CC and ZAXIS_CS."""
+    import f90nml
+
+    nml = f90nml.reads(
+        """
+&INDATA
+  MPOL = 2
+  NTOR = 2
+  RAXIS = 5.5 0.2
+  ZAXIS = 0.0 -0.1
+  RAXIS_CC = 9.0 9.0 0.01
+  ZAXIS_CC = 0.3
+  RBC(0, 0) = 5.5  RBC(0, 1) = 0.7  ZBS(0, 1) = 0.7
+/
+"""
+    )["indata"]
+
+    parameters = util.parameters_from_vmec(nml, "legacy_axis")
+
+    assert parameters["X1_a_cos"] == {(0, 0): 5.5, (0, 1): 0.2, (0, 2): 0.01}
+    assert parameters["X2_a_sin"] == {(0, 0): 0.0, (0, 1): -0.1}
+    assert parameters["X2_a_cos"] == {(0, 0): 0.3}
+    assert "init_average_axis" not in parameters
+
+
 def test_parameters_from_vmec_converts_vmec_profile_types():
     """Non-polynomial VMEC profiles convert to the profiles VMEC evaluates."""
     import f90nml

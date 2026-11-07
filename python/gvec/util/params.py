@@ -518,8 +518,9 @@ def vmec_profile(nml: Mapping, kind: Literal["pmass", "piota", "pcurr"]) -> np.n
         case "gauss_trunc":
             if current_density:
                 return _gauss_legendre_integral(
-                    lambda xv: c[0]
-                    * (np.exp(-((xv / c[1]) ** 2)) - np.exp(-((1 / c[1]) ** 2))),
+                    lambda xv: (
+                        c[0] * (np.exp(-((xv / c[1]) ** 2)) - np.exp(-((1 / c[1]) ** 2)))
+                    ),
                     x,
                 )
             return (
@@ -744,10 +745,14 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
         ("zaxis_cc", "X2_a_cos"),
         ("zaxis_cs", "X2_a_sin"),
     ]:
-        if vmec_key not in nml:
-            continue
-        values = np.array(nml[vmec_key], dtype=float)
-        if values.ndim == 0:
+        values = np.atleast_1d(np.array(nml.get(vmec_key, []), dtype=float))
+        # VMEC copies the nonzero entries of the legacy RAXIS and ZAXIS into RAXIS_CC and ZAXIS_CS
+        legacy = {"raxis_cc": "raxis", "zaxis_cs": "zaxis"}.get(vmec_key)
+        if legacy in nml:
+            old = np.atleast_1d(np.array(nml[legacy], dtype=float))
+            values = np.pad(values, (0, max(0, old.size - values.size)))
+            values[: old.size] = np.where(old != 0.0, old, values[: old.size])
+        if values.size == 0:
             continue
         params[gvec_key] = {(0, n): v for n, v in enumerate(values)}
     if not any(k in params for k in ["X1_a_cos", "X1_a_sin", "X2_a_cos", "X2_a_sin"]):
