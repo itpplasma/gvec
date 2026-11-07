@@ -518,8 +518,9 @@ def vmec_profile(nml: Mapping, kind: Literal["pmass", "piota", "pcurr"]) -> np.n
         case "gauss_trunc":
             if current_density:
                 return _gauss_legendre_integral(
-                    lambda xv: c[0]
-                    * (np.exp(-((xv / c[1]) ** 2)) - np.exp(-((1 / c[1]) ** 2))),
+                    lambda xv: (
+                        c[0] * (np.exp(-((xv / c[1]) ** 2)) - np.exp(-((1 / c[1]) ** 2)))
+                    ),
                     x,
                 )
             return (
@@ -1105,7 +1106,7 @@ def bspl2gvec(
 def profile_from_parameters(params: CaseInsensitiveDict) -> BSpline | Polynomial:
     match params.get("type", "polynomial"):
         case "polynomial":
-            coefs = np.array(params["coefs"])
+            coefs = np.array(params["coefs"], dtype=float)
             coefs *= params.get("scale", PARAMETER_SCALE_DEFAULT)
             return np.polynomial.Polynomial(coefs)
 
