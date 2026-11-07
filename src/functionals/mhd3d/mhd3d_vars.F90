@@ -54,6 +54,7 @@ INTEGER              :: which_hmap
 LOGICAL              :: init_fromBCOnly !! default=TRUE, for VMEC only, if set false: initial mapping is interpolated for s=0..1
 LOGICAL              :: init_with_profile_pressure !! default=FALSE, if True, overwrite profile from VMEC ini using  profile from parameterfile
 LOGICAL              :: init_with_profile_iota     !! default=FALSE, if True, overwrite profile from VMEC ini using  profile from parameterfile
+LOGICAL              :: init_low_radial_power !! default=FALSE, if true, the initial guess scales modes m>=2 like rho^2 (even m) or rho^3 (odd m) instead of rho^m
 LOGICAL              :: init_average_axis !! default=FALSE, if true, use outer boundary to estimate axis position (center of closed line)
 LOGICAL              :: boundary_perturb !! default=FALSE, if true, mapping is perturbed with a given modal perturbation of the boundary (X1pert_b,X2pert_b)
 INTEGER              :: boundary_perturb_type

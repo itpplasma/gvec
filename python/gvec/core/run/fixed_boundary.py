@@ -81,19 +81,24 @@ class FixedBoundaryRun(AbstractRun):
                 ],
             )
 
-        try:
-            self.state = new_state()
-        except gvec.errors.InitializationError as error:
-            if "JACOBIAN" not in str(error) or self.state.statefile:
-                raise
-            # as VMEC does after a bad initial Jacobian: guess the axis and start again
-            self.logger.warning(f"{error} Retrying with a guessed axis.")
-            guessed = gvec.util.guess_axis(self._state_parameters)
-            for params in (self.parameters, self._state_parameters):
-                params.pop("init_average_axis", None)
+        # as VMEC does after a bad initial Jacobian: guess the axis and start again,
+        # then also lower the radial power of the shaping modes in the initial guess
+        for retry in (None, {}, {"init_low_radial_power": True}):
+            if retry is not None:
+                for params in (self.parameters, self._state_parameters):
+                    params.pop("init_average_axis", None)
+                    params.update(retry)
+                guessed = gvec.util.guess_axis(self._state_parameters)
                 axis_keys = ("X1_a_cos", "X1_a_sin", "X2_a_cos", "X2_a_sin")
-                params.update({key: guessed[key] for key in axis_keys if key in guessed})
-            self.state = new_state()
+                for params in (self.parameters, self._state_parameters):
+                    params.update({key: guessed[key] for key in axis_keys if key in guessed})
+            try:
+                self.state = new_state()
+                break
+            except gvec.errors.InitializationError as error:
+                if "JACOBIAN" not in str(error) or self.state.statefile or retry:
+                    raise
+                self.logger.warning(f"{error} Retrying with a guessed axis.")
 
         with gvec.util.chdir(self.rundir):
             # write parameterfile & run GVEC
