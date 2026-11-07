@@ -557,3 +557,12 @@ def test_compute_boundary_perturbation_removes_dropped_modes_keeps_base():
     assert dict(pert["X1pert_b_cos"]) == {(2, 1): -0.03}
     assert dict(pert["X1pert_b_sin"]) == {(1, 1): -0.01}
     assert dict(pert["X2pert_b_sin"]) == {}
+
+
+def test_polynomial_profile_with_integer_coefficients():
+    import numpy as np
+
+    from gvec.util.params import profile_from_parameters
+
+    iota = profile_from_parameters({"type": "polynomial", "coefs": [1], "scale": -1.0})
+    np.testing.assert_allclose(iota(0.5), -1.0)
