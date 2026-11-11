@@ -88,6 +88,46 @@ def test_help(mode):
     assert proc.returncode == 0
 
 
+def test_cas3d_radial_metric():
+    """to-cas3d exports the radial-angular metric, which is odd under stellarator symmetry."""
+    from gvec.scripts.cas3d import gvec_to_cas3d
+
+    parameters = gvec.util.read_parameters("parameter.ini")
+    parameters["maxIter"] = 1
+    gvec.run(parameters)
+    state = gvec.find_state(Path("."))
+    kwargs = dict(ns=2, MN_out=(24, 2), MNfactor=1, flip="tor")
+
+    gvec_to_cas3d(state, Path("full.nc"), pointwise=Path("pw.nc"), **kwargs)
+    ds = xr.load_dataset("full.nc")
+    pw = xr.load_dataset("pw.nc")
+    for var in ["g_st", "g_sz"]:
+        assert abs(ds[f"{var}_mns"]).max() > 1e-3
+        assert abs(ds[f"{var}_mnc"]).max() < 1e-6 * abs(ds[f"{var}_mns"]).max()
+
+    # g_st from finite differences of the positions at zeta_B = 0, with s = rho^2 and theta = theta_B / 2 pi
+    rho, eps = np.sqrt(0.25), 1e-5
+    ev = gvec.EvaluationsBoozer(
+        [rho - eps, rho + eps], pw.theta.size, [0.0], state=state, MNfactor=1
+    )
+    state.compute(ev, "pos")
+    pos = ev.pos.transpose("rad", "pol", "tor", "xyz").data[:, :, 0, :]
+    e_s = (pos[1] - pos[0]) / (2 * eps) / (2 * rho)
+    m = np.fft.fftfreq(pw.theta.size, 1 / pw.theta.size)[:, None]
+    e_theta = (
+        2 * np.pi * np.fft.ifft(1j * m * np.fft.fft(pos.mean(axis=0), axis=0), axis=0).real
+    )
+    g_st = pw.g_st.sel(s=0.25, zeta=0.0).data
+    np.testing.assert_allclose(
+        g_st, np.sum(e_s * e_theta, axis=-1), atol=1e-6 * abs(g_st).max()
+    )
+
+    gvec_to_cas3d(state, Path("sym.nc"), stellsym=True, **kwargs)
+    ds = xr.load_dataset("sym.nc")
+    for var in ["g_st", "g_sz"]:
+        assert f"{var}_mns" in ds and f"{var}_mnc" not in ds
+
+
 def test_run():
     parameters = gvec.util.read_parameters("parameter.ini")
     run = gvec.run(parameters)

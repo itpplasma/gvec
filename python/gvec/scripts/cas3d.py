@@ -163,6 +163,8 @@ def gvec_to_cas3d(
         q_vol = [
             "N_FP",
             "mod_B",
+            "g_rt_B",
+            "g_rz_B",
             "B_contra_t_B",
             "B_contra_z_B",
             "B_theta_avg",
@@ -219,6 +221,16 @@ def gvec_to_cas3d(
         out["g_zz"].attrs = dict(
             long_name="toroidal component of the metric tensor",
             symbol=r"g_{\zeta\zeta}",
+        )
+        out["g_st"] = drho ** (-1) * dtheta ** (-1) * ds.g_rt_B
+        out["g_st"].attrs = dict(
+            long_name="radial-poloidal component of the metric tensor",
+            symbol=r"g_{s\theta}",
+        )
+        out["g_sz"] = drho ** (-1) * dzeta ** (-1) * ds.g_rz_B
+        out["g_sz"].attrs = dict(
+            long_name="radial-toroidal component of the metric tensor",
+            symbol=r"g_{s\zeta}",
         )
         out["II_tt"] = dtheta ** (-2) * ds.II_tt_B
         out["II_tt"].attrs = dict(
@@ -300,15 +312,17 @@ def gvec_to_cas3d(
 
         if stellsym:
             radial = [var for var in ft.data_vars if "m" not in ft[var].dims]
-            odd = ["yhat", "zhat"]
+            odd = ["yhat", "zhat", "g_st", "g_sz"]
             even = [var for var in out.data_vars if var not in odd and var not in radial]
             odd = [f"{var}_mns" for var in odd]
             even = [f"{var}_mnc" for var in even]
             ft = ft[radial + even + odd]
             # * xhat is even, yhat and zhat are odd-stellarator-symmetric
-            # * all metric coefficients are even-stellarator-symmetric
+            # * angular-angular metric coefficients are even-stellarator-symmetric
             #   * as they are a scalar product of two basis vectors, each with a derivative of zhat in the z direction.
             #   * zhat is odd, the derivative is even, therefore the scalar product and the metric coefficients are even.
+            # * radial-angular metric coefficients (g_st, g_sz) carry one angular
+            #   derivative and are odd, like the stream functions lambda and nu.
             # * modB and Jacobian are even-stellarator-symmetric
             #   * if they were odd, they would have to be 0 at the theta=zeta=0 point and flip sign there.
             #   * they both need to be > 0 everywhere though!

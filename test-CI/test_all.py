@@ -545,12 +545,16 @@ class TestToCAS3D(BaseTestPost):
         for var in boozft.variables:
             assert "long_name" in boozft[var].attrs
             assert "symbol" in boozft[var].attrs
+        for var in ["g_st", "g_sz"]:
+            assert f"{var}_mns" in boozft, f"{var} missing from stellsym export"
+            assert f"{var}_mnc" not in boozft, f"{var} must be odd under stellsym"
 
         assert Path("TestCAS3D_pw.nc").exists()
         booz = xr.load_dataset("TestCAS3D_pw.nc")
         for var in booz.variables:
             assert "long_name" in booz[var].attrs
             assert "symbol" in booz[var].attrs
+        assert "g_st" in booz and "g_sz" in booz
 
 
 @pytest.mark.pygvec
