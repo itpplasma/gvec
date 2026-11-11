@@ -79,8 +79,8 @@ parser.add_argument(
 parser.add_argument(
     "--winding",
     type=int,
-    default=1,
-    help="winding number for the surface transform to (hat-coordinates) (default 1)",
+    default=None,
+    help="winding number for the surface transform to (hat-coordinates) (default: winding of the positions around the z-axis, e.g. -1 for which_hmap=1)",
 )
 parser.add_argument(
     "--reparam",
@@ -89,6 +89,17 @@ parser.add_argument(
 )
 
 # === Main function === #
+
+
+def position_winding(state: State) -> int:
+    """Signed number of turns of the positions around the z-axis per turn of zeta.
+
+    A frame rotated by ``winding * zeta_B`` is only field periodic if ``winding`` equals this number modulo the number of field periods.
+    """
+    zeta = np.linspace(0, 2 * np.pi / state.nfp, 65)
+    ev = state.evaluate("pos", rho=[0.5], theta=[0.0], zeta=zeta)
+    phi = np.unwrap(np.arctan2(ev.pos.sel(xyz="y"), ev.pos.sel(xyz="x")).data.ravel())
+    return round((phi[-1] - phi[0]) * state.nfp / (2 * np.pi))
 
 
 def gvec_to_cas3d(
@@ -101,12 +112,19 @@ def gvec_to_cas3d(
     stellsym: bool = False,
     pointwise: Path | None = None,
     flip: Literal["pol", "tor"] = "tor",
-    winding: int = 1,
+    winding: int | None = None,
     grid: Literal["full", "half"] = "half",
     reparam: bool = False,
 ):
     if flip not in ["pol", "tor"]:
         raise ValueError(f"Invalid flip option: {flip}. Expected 'pol' or 'tor'.")
+    if winding is None:
+        winding = position_winding(state)
+    elif (winding - position_winding(state)) % state.nfp != 0:
+        raise ValueError(
+            f"winding={winding} does not give a field periodic frame: the positions wind "
+            f"{position_winding(state)} times around the z-axis per turn of zeta (N_FP={state.nfp})."
+        )
     with tqdm.tqdm(
         total=5,
         bar_format="{n_fmt}/{total_fmt} |{bar:25}| {desc}",

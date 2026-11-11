@@ -88,6 +88,26 @@ def test_help(mode):
     assert proc.returncode == 0
 
 
+def test_cas3d_winding():
+    """The default hat frame of to-cas3d must be field periodic."""
+    from gvec.scripts.cas3d import gvec_to_cas3d
+
+    parameters = gvec.util.read_parameters("parameter.ini")
+    parameters["maxIter"] = 1
+    gvec.run(parameters)
+    state = gvec.find_state(Path("."))
+    assert state.nfp == 5
+    gvec_to_cas3d(state, Path("cas3d.nc"), ns=2, MN_out=(2, 2), MNfactor=1, flip="pol")
+    ds = xr.load_dataset("cas3d.nc")
+    # which_hmap=1 has x = R cos(zeta), y = -R sin(zeta)
+    assert ds.winding == -1
+    # in a field periodic frame xhat is the major radius plus the shaping
+    assert np.all(ds.xhat_mnc.sel(m=0, n=0) > 0.9 * abs(ds.xhat_mnc).max(["m", "n"]))
+
+    with pytest.raises(ValueError, match="field periodic"):
+        gvec_to_cas3d(state, Path("cas3d.nc"), ns=2, MN_out=(2, 2), MNfactor=1, winding=1)
+
+
 def test_run():
     parameters = gvec.util.read_parameters("parameter.ini")
     run = gvec.run(parameters)
