@@ -197,6 +197,8 @@ def gvec_to_cas3d(
         out.attrs = ds.attrs
         for var in ["N_FP", "mod_B", "p", "beta_avg", "winding", "xhat", "yhat", "zhat"]:
             out[var] = ds[var]
+        # the exported toroidal angle is reversed for flip="tor", and the winding with it
+        out["winding"] = xr.DataArray(winding, attrs=ds.winding.attrs)
 
         # geometry
         out["Jac"] = ds.Jac_B * (drho * dtheta * dzeta) ** (-1)

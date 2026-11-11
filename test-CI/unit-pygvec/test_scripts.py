@@ -94,6 +94,55 @@ def test_run():
     assert isinstance(run, gvec.FixedBoundaryRun)
 
 
+@pytest.mark.parametrize("flip", ["pol", "tor"])
+def test_cas3d_winding_sign(flip):
+    """The exported winding must rebuild the positions on the exported toroidal angle."""
+    from gvec.scripts.cas3d import gvec_to_cas3d
+
+    parameters = gvec.util.read_parameters("parameter.ini")
+    parameters["maxIter"] = 1
+    gvec.run(parameters)
+    state = gvec.find_state(Path("."))
+    M, N = 2, 2
+    # reparam=True: this path rotates the frame by zeta_B
+    gvec_to_cas3d(
+        state,
+        Path("cas3d.nc"),
+        ns=2,
+        MN_out=(M, N),
+        MNfactor=2,
+        flip=flip,
+        winding=-1,
+        reparam=True,
+    )
+    ds = xr.load_dataset("cas3d.nc")
+
+    zeta_B = np.linspace(0, 2 * np.pi / state.nfp, 2 * N + 1, endpoint=False)
+    ev = gvec.EvaluationsBoozer(ds.rho.data, 2 * M + 1, zeta_B, state=state, MNfactor=2)
+    state.compute(ev, "pos")
+    x = ev.pos.sel(xyz="x").transpose("rad", "pol", "tor").data
+
+    # exported angles: one of them is reversed, both are normalized to [0, 1)
+    theta = ev.theta_B.data[:, None] / (2 * np.pi) * (-1 if flip == "pol" else 1)
+    zeta = ev.zeta_B.data[None, :] * state.nfp / (2 * np.pi) * (-1 if flip == "tor" else 1)
+
+    def series(name):
+        total = 0.0
+        for m in ds.m.data:
+            for n in ds.n.data:
+                angle = 2 * np.pi * (m * theta - n * zeta)
+                total = (
+                    total
+                    + ds[f"{name}_mnc"].sel(m=m, n=n).data[:, None, None] * np.cos(angle)
+                    + ds[f"{name}_mns"].sel(m=m, n=n).data[:, None, None] * np.sin(angle)
+                )
+        return total
+
+    angle = ds.winding.item() * 2 * np.pi * zeta / state.nfp
+    x_export = np.cos(angle) * series("xhat") - np.sin(angle) * series("yhat")
+    assert np.allclose(x_export, x, rtol=0, atol=1e-10 * abs(x).max())
+
+
 def test_run_iteration_limit():
     """A full run that stops at its iteration limit returns normally with a warning (#94)."""
     parameters = gvec.util.read_parameters("parameter.ini")
