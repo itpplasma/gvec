@@ -129,7 +129,10 @@ def init_surface(
 
 
 def get_xyz_hat(ds: xr.Dataset, winding: int | None = None):
-    """Compute the xhat, yhat, zhat coordiantes for a dataset with pointwise x, y, z, zeta coordinates."""
+    """Compute the xhat, yhat, zhat coordinates for a dataset with pointwise x, y, z, zeta_B coordinates.
+
+    The frame is rotated by ``winding * zeta_B``, the angle used by `init_surface` and by the surface quantities.
+    """
     if winding is None:
         if "winding" in ds:
             winding = ds.winding.item()
@@ -149,8 +152,8 @@ def get_xyz_hat(ds: xr.Dataset, winding: int | None = None):
 
     x = ds.pos.sel(xyz="x")
     y = ds.pos.sel(xyz="y")
-    ds["xhat"] = np.cos(winding * ds.zeta) * x + np.sin(winding * ds.zeta) * y
-    ds["yhat"] = -np.sin(winding * ds.zeta) * x + np.cos(winding * ds.zeta) * y
+    ds["xhat"] = np.cos(winding * ds.zeta_B) * x + np.sin(winding * ds.zeta_B) * y
+    ds["yhat"] = -np.sin(winding * ds.zeta_B) * x + np.cos(winding * ds.zeta_B) * y
     ds["zhat"] = ds.pos.sel(xyz="z")
 
     for i in "xyz":

@@ -89,6 +89,17 @@ def test_init_surface_multiple(ev, ift):
     assert {"xhat", "yhat", "zhat", "dxhat_dt", "dzhat_dtz"} < set(surf.data_vars)
 
 
+def test_get_xyz_hat_roundtrip(ev):
+    """The hat frame must give back the positions with the surface quantity `pos`."""
+    expected = ev.pos.copy(deep=True)
+    surface.get_xyz_hat(ev, winding=1)
+    # the Boozer transform makes zeta differ from zeta_B on this case
+    assert abs(ev.zeta - ev.zeta_B).max() > 1e-3
+    ev = ev.drop_vars("pos")
+    surface.compute(ev, "pos")
+    np.testing.assert_allclose(ev.pos.transpose(*expected.dims), expected, atol=1e-13)
+
+
 @pytest.mark.parametrize(
     "Q",
     [

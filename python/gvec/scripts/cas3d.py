@@ -337,6 +337,7 @@ def gvec_to_cas3d(
             "s is spaced equidistantly on a half-mesh between 0 and 1. "
             "θ is the poloidal angle and ζ is the toroidal angle, normalized to one field period. "
         )
+        ft.attrs["position_frame"] = "xhat,yhat rotated by winding*zeta_B"
         ft.attrs["stellarator_symmetry"] = str(stellsym)
 
         # Save to netCDF
