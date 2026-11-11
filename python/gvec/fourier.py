@@ -207,16 +207,21 @@ def fft2d(x: np.ndarray, theta0=0.0, zeta0=0.0):
     c = 2 * xf.real
     c[0, 0] /= 2  # no double counting for n = 0
     c = np.roll(c, -1, axis=1)[:, ::-1]  # invert the toroidal indices
-    c[0, -N:] = 0  # zero out the negative toroidal indices
+    if N > 0:  # the slice -0: would select the whole m = 0 row
+        c[0, -N:] = 0  # zero out the negative toroidal indices
 
     s = -2 * xf.imag
     s = np.roll(s, -1, axis=1)[:, ::-1]  # invert the toroidal indices
-    s[0, -N:] = 0  # zero out the negative toroidal indices
+    if N > 0:
+        s[0, -N:] = 0  # zero out the negative toroidal indices
 
     if x.shape[1] % 2 == 0:
         # remove the extra toroidal harmonic if the input has an even number of points
-        c = np.concatenate([c[:, : N + 1], c[:, -N:]], axis=1)
-        s = np.concatenate([s[:, : N + 1], s[:, -N:]], axis=1)
+        if N > 0:
+            c = np.concatenate([c[:, : N + 1], c[:, -N:]], axis=1)
+            s = np.concatenate([s[:, : N + 1], s[:, -N:]], axis=1)
+        else:
+            c, s = c[:, :1], s[:, :1]
 
     return c, s
 

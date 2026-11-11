@@ -281,6 +281,20 @@ def test_fft2d_modes_grid(MN):
     assert abs(n.max()) == N
 
 
+@pytest.mark.parametrize("nzeta", [1, 2])
+def test_fft2d_axisymmetric(nzeta):
+    """One or two toroidal samples (N = 0) must keep the m = 0 coefficients."""
+    theta = np.linspace(0, 2 * np.pi, 17, endpoint=False)
+    x = np.repeat((3.0 + 2.0 * np.cos(theta) - 4.0 * np.sin(2 * theta))[:, None], nzeta, axis=1)
+
+    c, s = fourier.fft2d(x)
+
+    assert c.shape == s.shape == (9, 1)
+    np.testing.assert_allclose(c[:3, 0], [3.0, 2.0, 0.0], atol=1e-14)
+    np.testing.assert_allclose(s[:3, 0], [0.0, 0.0, -4.0], atol=1e-14)
+    np.testing.assert_allclose(fourier.ifft2d(c, s), x[:, :1], atol=1e-14)
+
+
 @pytest.mark.parametrize(
     "dM2, dN2",
     [(2, 0), (0, 2), (2, 2), (-2, 0), (0, -2), (-2, -2)],
