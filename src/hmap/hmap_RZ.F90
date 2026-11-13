@@ -152,8 +152,11 @@ IMPLICIT NONE
   INTEGER :: i,j,k
   !===================================================================================================================================
   !xv not used here
-  !$OMP PARALLEL DO COLLAPSE(3) SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(i,j,k)
-  DO k=1,ndims(3); DO j=1,ndims(2); DO i=1,ndims(1)
+  ! COLLAPSE(3) would hide the contiguous i loop from the vectorizer
+  !$OMP PARALLEL DO COLLAPSE(2) SCHEDULE(STATIC) DEFAULT(SHARED) PRIVATE(i,j,k)
+  DO k=1,ndims(3); DO j=1,ndims(2)
+  !$OMP SIMD
+  DO i=1,ndims(1)
     CALL hmap_RZ_eval_all_e(&
              q1(i,j,k),q2(i,j,k),dX1_dt(i,j,k),dX2_dt(i,j,k),dX1_dz(i,j,k),dX2_dz(i,j,k), &
              Jh(i,j,k)    ,g_tt(i,j,k)    ,g_tz(i,j,k)    ,g_zz(i,j,k), &
