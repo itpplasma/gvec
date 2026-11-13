@@ -164,7 +164,8 @@ SET(GVEC_COMPILE_FLAGS "")
 
 IF(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
   SET(GVEC_ADD_COMPILE_FLAGS_MACHINE "-march=native" CACHE STRING "additional machine dependent compile flags")
-  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fdefault-real-8 -fdefault-double-8 -fbackslash -ffree-line-length-0 -DGNU")
+  # -fPIC alone lets every public module procedure be interposed, which stops inlining and vectorization of the point kernels
+  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fdefault-real-8 -fdefault-double-8 -fbackslash -ffree-line-length-0 -fno-semantic-interposition -DGNU")
   SET(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE} -finline-functions") #gives segfault: -fstack-arrays
   SET(CMAKE_Fortran_FLAGS_PROFILE "${CMAKE_Fortran_FLAGS_PROFILE} -pg -O3 -finline-functions") #gives segfault: -fstack-arrays
   SET(CMAKE_Fortran_FLAGS_DEBUG   "${CMAKE_Fortran_FLAGS_DEBUG} -O0 -ggdb3 -ffpe-trap=invalid -fbounds-check -finit-real=snan -fbacktrace -Wall -Wextra")
