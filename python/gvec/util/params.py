@@ -722,7 +722,9 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
                 if not np.isnan(v) and v != 0.0:
                     params[gvec_key][m, n] = values[m - m0, n - n0]
 
-    if "rbs" in nml or "zbc" in nml:
+    # LASYM = T lets the equilibrium break the symmetry even from a symmetric initial boundary,
+    # e.g. a free boundary in an up-down asymmetric coil field
+    if "rbs" in nml or "zbc" in nml or not stellsym:
         if stellsym:
             logger.warning(
                 "VMEC namelist contains 'RBS' or 'ZBC' but is supposed to be stellarator symmetric. Assuming asymmetry."
@@ -731,10 +733,6 @@ def parameters_from_vmec(nml: Mapping, name: str) -> CaseInsensitiveDict:
         params["X2_sin_cos"] = "_sincos_"
         params["LA_sin_cos"] = "_sincos_"
     else:
-        if not stellsym:
-            logger.warning(
-                "VMEC namelist does not contain 'RBS' or 'ZBC' but is supposed to be non-stellarator symmetric. Assuming symmetry."
-            )
         params["X1_sin_cos"] = "_cos_"
         params["X2_sin_cos"] = "_sin_"
         params["LA_sin_cos"] = "_sin_"
