@@ -153,15 +153,18 @@ def test_free_boundary_newton_out_of_totaliter_is_no_success(tmp_path):
     """A budget that ends right after the converged start leaves the boundary unchanged: the run must not report
     success, although the interior force is below minimize_tol."""
     pytest.importorskip("fbtools")
-    p = _params()
-    p["minimize_tol"] = 1e-5
-    p["totalIter"] = 2000
-    p["free_boundary"] = dict(updates=1, tolerance=1e-12, method="newton")  # start solve only
+
+    def params(total_iter, updates):  # gvec.run adds the coil set to the parameters it is given
+        p = _params()
+        p.update(minimize_tol=1e-5, totalIter=total_iter)
+        p["free_boundary"] = dict(updates=updates, tolerance=1e-12, method="newton")
+        return p
+
+    p = params(2000, 1)  # start solve only
     start = gvec.run(p, runpath=tmp_path / "start", coil_set=_axis_wire(1e6))
     assert start.max_force <= p["minimize_tol"]
 
-    p["totalIter"] = start.GVEC_iter_used + 1
-    p["free_boundary"]["updates"] = 4
+    p = params(start.GVEC_iter_used + 1, 4)
     with pytest.warns(UserWarning, match="GVEC run:"):
         run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
     assert run.max_force <= p["minimize_tol"]
