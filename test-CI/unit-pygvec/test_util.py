@@ -236,6 +236,20 @@ def test_parameters_from_vmec_accepts_sparse_boundary_arrays():
     }
 
 
+def test_parameters_from_vmec_lasym_with_symmetric_boundary():
+    """LASYM = T keeps the asymmetric modes when the initial boundary is symmetric."""
+    import f90nml
+
+    nml = f90nml.reads(
+        "&INDATA\n  LASYM = T\n  RBC(0, 0) = 1.7  RBC(0, 1) = 0.6  ZBS(0, 1) = 1.0\n/\n"
+    )["indata"]
+
+    parameters = util.parameters_from_vmec(nml, "lasym")
+
+    for q in ("X1", "X2", "LA"):
+        assert parameters[f"{q}_sin_cos"] == "_sincos_"
+
+
 def test_parameters_from_vmec_reads_legacy_and_scalar_axis():
     """VMEC copies nonzero RAXIS and ZAXIS entries into RAXIS_CC and ZAXIS_CS."""
     import f90nml
