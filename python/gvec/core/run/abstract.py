@@ -342,6 +342,10 @@ class AbstractRun(ABC):
             self.success = (
                 self.success and self.state.rms_iota <= self.state.picard_current.iota_tol
             )
+        # A stage cut short by totalIter, such as a free-boundary update that never started, did not
+        # finish, even when the interior solve before the cut is below minimize_tol.
+        if self._stop_reason == "Maximum number of iterations reached (totalIter).":
+            self.success = False
         if self.success:
             self.message = "Tolerance reached."
         else:

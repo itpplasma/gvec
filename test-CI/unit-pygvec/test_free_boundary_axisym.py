@@ -149,6 +149,26 @@ def test_free_boundary_stop_above_interior_tolerance(tmp_path, criterion, caplog
     assert str(recorded[-1].message) == f"GVEC run: {run.message}"
 
 
+def test_free_boundary_newton_out_of_totaliter_is_no_success(tmp_path):
+    """A budget that ends right after the converged start leaves the boundary unchanged: the run must not report
+    success, although the interior force is below minimize_tol."""
+    pytest.importorskip("fbtools")
+    p = _params()
+    p["minimize_tol"] = 1e-5
+    p["totalIter"] = 2000
+    p["free_boundary"] = dict(updates=1, tolerance=1e-12, method="newton")  # start solve only
+    start = gvec.run(p, runpath=tmp_path / "start", coil_set=_axis_wire(1e6))
+    assert start.max_force <= p["minimize_tol"]
+
+    p["totalIter"] = start.GVEC_iter_used + 1
+    p["free_boundary"]["updates"] = 4
+    with pytest.warns(UserWarning, match="GVEC run:"):
+        run = gvec.run(p, runpath=tmp_path / "fb", coil_set=_axis_wire(1e6))
+    assert run.max_force <= p["minimize_tol"]
+    assert not run.success
+    assert "totalIter" in run.message
+
+
 def test_free_boundary_resolution_proposal_after_newton_stalls_at_update_0(tmp_path):
     """Newton that makes no step leaves only update 0 in the diagnostics; the resolution proposal at the end of
     the stage must use that column, not the (still NaN) last one."""
